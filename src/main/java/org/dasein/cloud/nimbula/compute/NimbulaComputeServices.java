@@ -39,4 +39,9 @@ public class NimbulaComputeServices extends AbstractComputeServices {
     public @Nonnull Instance getVirtualMachineSupport() {
         return new Instance(cloud);
     }
+
+    @Override
+    public @Nonnull Storage getVolumeSupport() {
+        return new Storage(cloud);
+    }
 }

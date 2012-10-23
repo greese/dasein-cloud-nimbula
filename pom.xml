@@ -237,7 +237,7 @@
                 </property>
             </systemProperties>  
           <includes>
-            <!-- <include>**/NimbulaTestSuite.java</include> -->
+            <!--<include>**/NimbulaTestSuite.java</include> -->
           </includes>
         </configuration>
       </plugin> 
