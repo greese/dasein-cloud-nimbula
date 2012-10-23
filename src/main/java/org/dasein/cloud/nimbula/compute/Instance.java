@@ -18,7 +18,6 @@
 
 package org.dasein.cloud.nimbula.compute;
 
-import java.io.IOException;
 import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -26,14 +25,16 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
-import org.apache.commons.httpclient.HttpException;
 import org.apache.log4j.Logger;
 import org.dasein.cloud.CloudException;
 import org.dasein.cloud.InternalException;
 import org.dasein.cloud.OperationNotSupportedException;
+import org.dasein.cloud.ProviderContext;
+import org.dasein.cloud.Requirement;
 import org.dasein.cloud.Tag;
 import org.dasein.cloud.compute.Architecture;
 import org.dasein.cloud.compute.Platform;
+import org.dasein.cloud.compute.VMLaunchOptions;
 import org.dasein.cloud.compute.VirtualMachine;
 import org.dasein.cloud.compute.VirtualMachineProduct;
 import org.dasein.cloud.compute.VirtualMachineSupport;
@@ -42,11 +43,16 @@ import org.dasein.cloud.compute.VmStatistics;
 import org.dasein.cloud.identity.ServiceAction;
 import org.dasein.cloud.nimbula.NimbulaDirector;
 import org.dasein.cloud.nimbula.NimbulaMethod;
+import org.dasein.util.CalendarWrapper;
+import org.dasein.util.uom.storage.Gigabyte;
+import org.dasein.util.uom.storage.Megabyte;
+import org.dasein.util.uom.storage.Storage;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
 public class Instance implements VirtualMachineSupport {
     static private final Logger logger = NimbulaDirector.getLogger(Instance.class);
@@ -60,12 +66,12 @@ public class Instance implements VirtualMachineSupport {
     Instance(@Nonnull NimbulaDirector cloud) { this.cloud = cloud; }
     
     @Override
-    public void boot(String vmId) throws InternalException, CloudException {
-        throw new OperationNotSupportedException("Nimbula does not yet support VM pausing/booting.");
+    public void unpause(@Nonnull String vmId) throws InternalException, CloudException {
+        throw new OperationNotSupportedException("Pause/unpause is not supported");
     }
 
     @Override
-    public VirtualMachine clone(String vmId, String intoDcId, String name, String description, boolean powerOn, String ... firewallIds) throws InternalException, CloudException {
+    public @Nonnull VirtualMachine clone(@Nonnull String vmId, @Nonnull String intoDcId, @Nonnull String name, @Nonnull String description, boolean powerOn, @Nullable String ... firewallIds) throws InternalException, CloudException {
         throw new OperationNotSupportedException("Cloning is not currently supported.");
     }
 
@@ -80,34 +86,22 @@ public class Instance implements VirtualMachineSupport {
     }
 
     @Override
-    public String getConsoleOutput(String vmId) throws InternalException, CloudException {
+    public @Nonnull String getConsoleOutput(@Nonnull String vmId) throws InternalException, CloudException {
         return "";
     }
 
+    @Override
+    public int getMaximumVirtualMachineCount() throws CloudException, InternalException {
+        return -2;
+    }
+
     @Override 
-    public VirtualMachineProduct getProduct(String productId) throws InternalException, CloudException {
+    public @Nullable VirtualMachineProduct getProduct(@Nonnull String productId) throws InternalException, CloudException {
         NimbulaMethod method = new NimbulaMethod(cloud, SHAPE);
-        
-        try {
-            int code = method.get("/" + productId);
+        int code = method.get("/" + productId);
             
-            if( code == 404 || code == 401 ) {
-                return null;
-            }
-        }
-        catch( HttpException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
-        catch( IOException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
+        if( code == 404 || code == 401 ) {
+            return null;
         }
         try {
             return toProduct(method.getResponseBody());
@@ -122,22 +116,57 @@ public class Instance implements VirtualMachineSupport {
     }
     
     @Override
-    public String getProviderTermForServer(Locale locale) {
+    public @Nonnull String getProviderTermForServer(@Nonnull Locale locale) {
         return "instance";
     }
 
     @Override
-    public VmStatistics getVMStatistics(String vmId, long from, long to) throws InternalException, CloudException {
+    public @Nonnull VmStatistics getVMStatistics(@Nonnull String vmId, long from, long to) throws InternalException, CloudException {
         return new VmStatistics();
     }
 
     @Override
-    public Iterable<VmStatistics> getVMStatisticsForPeriod(String vmId, long from, long to) throws InternalException, CloudException {
+    public @Nonnull Iterable<VmStatistics> getVMStatisticsForPeriod(@Nonnull String vmId, long from, long to) throws InternalException, CloudException {
         return Collections.emptyList();
     }
 
     @Override
-    public VirtualMachine getVirtualMachine(String vmId) throws InternalException, CloudException {
+    public @Nonnull Requirement identifyPasswordRequirement() throws CloudException, InternalException {
+        return Requirement.NONE;
+    }
+
+    @Override
+    public @Nonnull Requirement identifyRootVolumeRequirement() throws CloudException, InternalException {
+        return Requirement.NONE;
+    }
+
+    @Override
+    public @Nonnull Requirement identifyShellKeyRequirement() throws CloudException, InternalException {
+        return Requirement.NONE;
+    }
+
+    @Override
+    public @Nonnull Requirement identifyVlanRequirement() throws CloudException, InternalException {
+        return Requirement.OPTIONAL;
+    }
+
+    @Override
+    public boolean isAPITerminationPreventable() throws CloudException, InternalException {
+        return false;
+    }
+
+    @Override
+    public boolean isBasicAnalyticsSupported() throws CloudException, InternalException {
+        return false;
+    }
+
+    @Override
+    public boolean isExtendedAnalyticsSupported() throws CloudException, InternalException {
+        return false;
+    }
+
+    @Override
+    public @Nullable VirtualMachine getVirtualMachine(@Nonnull String vmId) throws InternalException, CloudException {
         try {
             return toVirtualMachine(getInstance(vmId));
         }
@@ -152,27 +181,10 @@ public class Instance implements VirtualMachineSupport {
      
     private JSONObject getInstance(String vmId) throws InternalException, CloudException, JSONException {
         NimbulaMethod method = new NimbulaMethod(cloud, INSTANCE);
-        
-        try {
-            int code = method.get(vmId);
+        int code = method.get(vmId);
             
-            if( code == 404 || code == 401 ) {
-                return null;
-            }
-        }
-        catch( HttpException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
-        catch( IOException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
+        if( code == 404 || code == 401 ) {
+            return null;
         }
         return method.getResponseBody();
     }
@@ -222,6 +234,11 @@ public class Instance implements VirtualMachineSupport {
         }
     }
 
+    @Override
+    public boolean isUserDataSupported() throws CloudException, InternalException {
+        return false;
+    }
+
     static private class LaunchInfo {
         public int entry;
         public String imageList;
@@ -232,23 +249,7 @@ public class Instance implements VirtualMachineSupport {
         
         NimbulaMethod method = new NimbulaMethod(cloud, Image.IMAGELIST);
         
-        try {
-            method.get("/" + idInfo[0] + "/" + idInfo[1] + "/");
-        }
-        catch( HttpException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
-        catch( IOException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
+        method.get("/" + idInfo[0] + "/" + idInfo[1] + "/");
         try {
             JSONArray array = method.getResponseBody().getJSONArray("result");
 
@@ -286,29 +287,51 @@ public class Instance implements VirtualMachineSupport {
     }
     
     @Override
-    public VirtualMachine launch(String fromMachineImageId, VirtualMachineProduct product, String dataCenterId, String name, String description, String withKeypairId, String inVlanId, boolean withAnalytics, boolean asSandbox, String ... firewalls) throws InternalException, CloudException {
+    public @Nonnull VirtualMachine launch(@Nonnull String fromMachineImageId, @Nonnull VirtualMachineProduct product, @Nonnull String dataCenterId, @Nonnull String name, @Nonnull String description, @Nullable String withKeypairId, @Nullable String inVlanId, boolean withAnalytics, boolean asSandbox, @Nullable String ... firewalls) throws InternalException, CloudException {
         return launch(fromMachineImageId, product, dataCenterId, name, description, withKeypairId, inVlanId, withAnalytics, asSandbox, firewalls, new Tag[0]);
     }
     
     @Override
-    public VirtualMachine launch(String fromMachineImageId, VirtualMachineProduct product, String dataCenterId, String name, String description, String withKeypairId, String inVlanId, boolean withAnalytics, boolean asSandbox, String[] firewalls, Tag ... tags) throws InternalException, CloudException {
+    public @Nonnull VirtualMachine launch(@Nonnull String fromMachineImageId, @Nonnull VirtualMachineProduct product, @Nonnull String dataCenterId, @Nonnull String name, @Nonnull String description, @Nullable String withKeypairId, String inVlanId, boolean withAnalytics, boolean asSandbox, @Nullable String[] firewalls, @Nullable Tag ... tags) throws InternalException, CloudException {
+        VMLaunchOptions options;
+
+        if( inVlanId == null ) {
+            options = VMLaunchOptions.getInstance(product.getProviderProductId(), fromMachineImageId, name, description).inDataCenter(dataCenterId);
+        }
+        else {
+            options = VMLaunchOptions.getInstance(product.getProviderProductId(), fromMachineImageId, name, description).inVlan(null, dataCenterId, inVlanId);
+        }
+        if( withKeypairId != null ) {
+            options = options.withBoostrapKey(withKeypairId);
+        }
+        if( tags != null ) {
+            for( Tag t : tags ) {
+                options = options.withMetaData(t.getKey(), t.getValue());
+            }
+        }
+        if( firewalls != null ) {
+            options = options.behindFirewalls(firewalls);
+        }
+        return launch(options);
+    }
+
+    @Override
+    public @Nonnull VirtualMachine launch(@Nonnull VMLaunchOptions options) throws CloudException, InternalException {
         HashMap<String,Object> state = new HashMap<String,Object>();
-        LaunchInfo launch = getLaunchInfo(fromMachineImageId);
+        LaunchInfo launch = getLaunchInfo(options.getMachineImageId());
         state.put("relationships", new ArrayList<String>());
         
         ArrayList<Map<String,Object>> targets = new ArrayList<Map<String,Object>>();
         HashMap<String,Object> plan = new HashMap<String,Object>();
         
-        plan.put("label", name);
-        plan.put("shape", product.getProductId());
+        plan.put("label", options.getFriendlyName());
+        plan.put("shape", options.getStandardProductId());
         plan.put("imagelist", launch.imageList);
         plan.put("entry", launch.entry);
-        if( firewalls != null && firewalls.length > 0 ) {
+        if( options.getFirewallIds().length > 0 ) {
             ArrayList<String> ids = new ArrayList<String>();
-            
-            for( String fwid : firewalls ) {
-                ids.add(fwid);
-            }
+
+            Collections.addAll(ids, options.getFirewallIds());
             plan.put("seclists", ids);
         }
         targets.add(plan);
@@ -317,30 +340,20 @@ public class Instance implements VirtualMachineSupport {
         
         NimbulaMethod method = new NimbulaMethod(cloud, LAUNCHPLAN);
         
-        try {
-            method.post(state);
-        }
-        catch( HttpException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
-        catch( IOException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
+        method.post(state);
+
         try {
             JSONArray instances = method.getResponseBody().getJSONArray("instances");
             
             if( instances.length() < 1 ) {
                 throw new CloudException("Cloud failed to launch any instances without comment.");
             }
-            return toVirtualMachine(instances.getJSONObject(0));
+            VirtualMachine vm = toVirtualMachine(instances.getJSONObject(0));
+
+            if( vm == null ) {
+                throw new CloudException("No virtual machine was created, but no error was specified");
+            }
+            return vm;
         }
         catch( JSONException e ) {
             if( logger.isDebugEnabled() ) {
@@ -352,12 +365,12 @@ public class Instance implements VirtualMachineSupport {
     }
 
     @Override
-    public Iterable<String> listFirewalls(String vmId) throws InternalException, CloudException {
+    public @Nonnull Iterable<String> listFirewalls(@Nonnull String vmId) throws InternalException, CloudException {
         try {
             JSONObject ob = getInstance(vmId);
             
             if( ob == null || !ob.has("name") ) {
-                return null;
+                throw new CloudException("No such instance: " + vmId);
             }
             if( !ob.has("seclists") ) {
                 return Collections.emptyList();
@@ -380,39 +393,19 @@ public class Instance implements VirtualMachineSupport {
     }
 
     @Override
-    public Iterable<VirtualMachineProduct> listProducts(Architecture architecture) throws InternalException, CloudException {
+    public @Nonnull Iterable<VirtualMachineProduct> listProducts(@Nonnull Architecture architecture) throws InternalException, CloudException {
         if( architecture.equals(Architecture.I32) ) {
             return Collections.emptyList();
         }
         NimbulaMethod method = new NimbulaMethod(cloud, SHAPE);
         
-        try {
-            method.list();
-        }
-        catch( HttpException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
-        catch( IOException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
+        method.list();
         try {
             ArrayList<VirtualMachineProduct> products = new ArrayList<VirtualMachineProduct>();
             JSONArray array = method.getResponseBody().getJSONArray("result");
             
             for( int i=0; i<array.length(); i++ ) {
-                VirtualMachineProduct product = toProduct(array.getJSONObject(i));
-
-                if( product != null ) {
-                    products.add(product);
-                }
+                products.add(toProduct(array.getJSONObject(i)));
             }
             return products;
         }
@@ -426,26 +419,16 @@ public class Instance implements VirtualMachineSupport {
     }
 
     @Override
-    public Iterable<VirtualMachine> listVirtualMachines() throws InternalException, CloudException {
+    public Iterable<Architecture> listSupportedArchitectures() throws InternalException, CloudException {
+        return Collections.singletonList(Architecture.I64);
+    }
+
+    @Override
+    public @Nonnull Iterable<VirtualMachine> listVirtualMachines() throws InternalException, CloudException {
         NimbulaMethod method = new NimbulaMethod(cloud, INSTANCE);
         
-        try {
-            method.list();
-        }
-        catch( HttpException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
-        catch( IOException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
+        method.list();
+
         try {
             ArrayList<VirtualMachine> vms = new ArrayList<VirtualMachine>();
             JSONArray array = method.getResponseBody().getJSONArray("result");
@@ -469,65 +452,102 @@ public class Instance implements VirtualMachineSupport {
     }
 
     @Override
-    public void pause(String vmId) throws InternalException, CloudException {
-        throw new OperationNotSupportedException("Nimbula does not yet support server pausing.");
+    public void pause(@Nonnull String vmId) throws InternalException, CloudException {
+        throw new OperationNotSupportedException("Pause/unpause not supported");
     }
 
     @Override
-    public void reboot(String vmId) throws CloudException, InternalException {
-        throw new OperationNotSupportedException("Nimbula does not yet support server reboots");
+    public void reboot(@Nonnull String vmId) throws CloudException, InternalException {
+        throw new OperationNotSupportedException("Reboots not supported");
+    }
+
+    @Override
+    public void resume(@Nonnull String vmId) throws CloudException, InternalException {
+        throw new OperationNotSupportedException("Suspend/resume not supported");
+    }
+
+    @Override
+    public void start(@Nonnull String vmId) throws InternalException, CloudException {
+        throw new OperationNotSupportedException("Start/stop not supported");
+    }
+
+    @Override
+    public void stop(@Nonnull String vmId) throws InternalException, CloudException {
+        throw new OperationNotSupportedException("Start/stop not supported");
     }
 
     @Override 
     public boolean supportsAnalytics() {
         return false;
     }
-    
+
     @Override
-    public void terminate(String vmId) throws InternalException, CloudException {
+    public boolean supportsPauseUnpause(@Nonnull VirtualMachine vm) {
+        return false;
+    }
+
+    @Override
+    public boolean supportsStartStop(@Nonnull VirtualMachine vm) {
+        return false;
+    }
+
+    @Override
+    public boolean supportsSuspendResume(@Nonnull VirtualMachine vm) {
+        return false;
+    }
+
+    @Override
+    public void suspend(@Nonnull String vmId) throws CloudException, InternalException {
+        throw new OperationNotSupportedException("Suspend/resume not supported");
+    }
+
+    @Override
+    public void terminate(@Nonnull String vmId) throws InternalException, CloudException {
+        long timeout = System.currentTimeMillis() + (CalendarWrapper.MINUTE * 20L);
         NimbulaMethod method = new NimbulaMethod(cloud, INSTANCE);
         VirtualMachine vm = getVirtualMachine(vmId);
-        
-        while( vm != null && VmState.PENDING.equals(vm.getCurrentState()) ) {
+
+        while( timeout > System.currentTimeMillis() ) {
+            if( vm == null || !VmState.PENDING.equals(vm.getCurrentState()) ) {
+                break;
+            }
             try { Thread.sleep(5000L); }
             catch( InterruptedException ignore ) { }
             vm = getVirtualMachine(vmId);
         }
-        try {
-            method.delete(vmId);
-        }
-        catch( HttpException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
+        method.delete(vmId);
+        while( timeout > System.currentTimeMillis() ) {
+            if( vm == null || VmState.TERMINATED.equals(vm.getCurrentState()) ) {
+                return;
             }
-            throw new CloudException(e);
+            try { Thread.sleep(5000L); }
+            catch( InterruptedException ignore ) { }
+            vm = getVirtualMachine(vmId);
         }
-        catch( IOException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
+        throw new CloudException("The system timed out waiting for the virtual machine to terminate");
     }
-    
-    private VirtualMachineProduct toProduct(JSONObject ob) throws JSONException { 
+
+    private @Nonnull VirtualMachineProduct toProduct(@Nonnull JSONObject ob) throws JSONException {
         VirtualMachineProduct product = new VirtualMachineProduct();
         
-        product.setProductId(ob.getString("name"));
-        product.setRamInMb(ob.getInt("ram"));
-        product.setCpuCount((int)ob.getDouble("cpus"));
+        product.setProviderProductId(ob.getString("name"));
+        product.setRamSize(new Storage<Megabyte>(ob.getInt("ram"), Storage.MEGABYTE));
+        if( ob.has("cpus") ) {
+            product.setCpuCount((int)ob.getDouble("cpus"));
+        }
+        if( product.getCpuCount() < 1 ) {
+            product.setCpuCount(1);
+        }
         product.setDescription(ob.getString("name"));
         product.setName(ob.getString("name"));
-        product.setDiskSizeInGb(1);
-        if( product.getRamInMb() < 256 ) {
-            product.setRamInMb(256);
+        product.setRootVolumeSize(new Storage<Gigabyte>(1, Storage.GIGABYTE));
+        if( product.getRamSize().intValue() < 256 ) {
+            product.setRamSize(new Storage<Megabyte>(256, Storage.MEGABYTE));
         }
         return product;
     }
     
-    private VmState toState(String value) {
+    private @Nonnull VmState toState(@Nonnull String value) {
         if( value.equalsIgnoreCase("running") ) {
             return VmState.RUNNING;
         }
@@ -537,20 +557,32 @@ public class Instance implements VirtualMachineSupport {
         else if( value.equalsIgnoreCase("terminating") ) {
             return VmState.STOPPING;
         }
-        throw new RuntimeException("Unknown state: " + value);
+        logger.warn("DEBUG: Unknown Nimbula VM state: " + value);
+        return VmState.PENDING;
     }
     
-    private VirtualMachine toVirtualMachine(JSONObject ob) throws JSONException, InternalException, CloudException {
+    private @Nullable VirtualMachine toVirtualMachine(@Nullable JSONObject ob) throws JSONException, InternalException, CloudException {
         if( ob == null ) {
             return null;
+        }
+
+        ProviderContext ctx = cloud.getContext();
+
+        if( ctx == null ) {
+            throw new CloudException("No context set for this request");
+        }
+        String regionId = ctx.getRegionId();
+
+        if( regionId == null ) {
+            throw new CloudException("No region was set for this request");
         }
         String desc = ob.getString("name");
         VirtualMachine vm = new VirtualMachine();
         String[] idInfo = cloud.parseId(ob.getString("name"));
 
-        vm.setProviderRegionId(cloud.getContext().getRegionId());
-        vm.setProviderDataCenterId(cloud.getContext().getRegionId());
-        vm.setProduct(getProduct(ob.getString("shape")));
+        vm.setProviderRegionId(regionId);
+        vm.setProviderDataCenterId(regionId);
+        vm.setProductId(ob.getString("shape"));
         vm.setClonable(false);
         vm.setImagable(true);
         vm.setPausable(false);

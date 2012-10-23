@@ -18,21 +18,26 @@
 
 package org.dasein.cloud.nimbula.network;
 
-import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Locale;
 
-import org.apache.commons.httpclient.HttpException;
 import org.apache.log4j.Logger;
 import org.dasein.cloud.CloudException;
 import org.dasein.cloud.InternalException;
 import org.dasein.cloud.OperationNotSupportedException;
+import org.dasein.cloud.ProviderContext;
+import org.dasein.cloud.Requirement;
 import org.dasein.cloud.identity.ServiceAction;
+import org.dasein.cloud.network.IPVersion;
+import org.dasein.cloud.network.NICCreateOptions;
 import org.dasein.cloud.network.NetworkInterface;
+import org.dasein.cloud.network.RoutingTable;
 import org.dasein.cloud.network.Subnet;
+import org.dasein.cloud.network.VLANState;
 import org.dasein.cloud.network.VLANSupport;
 import org.dasein.cloud.network.VLAN;
 import org.dasein.cloud.nimbula.NimbulaDirector;
@@ -44,6 +49,12 @@ import org.json.JSONObject;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
+/**
+ * Implements virtual ethernet networking in Nimbula.
+ * @author George Reese (george.reese@enstratus.com)
+ * @version 2012.09 modified for the 2012.09 API changes
+ * @since unknown
+ */
 public class Vethernet implements VLANSupport {
     static private final Logger logger = NimbulaDirector.getLogger(VLANSupport.class);
     
@@ -54,32 +65,46 @@ public class Vethernet implements VLANSupport {
     Vethernet(@Nonnull NimbulaDirector cloud) {
         this.cloud = cloud;
     }
-    
+
+    @Override
+    public void addRouteToAddress(@Nonnull String toRoutingTableId, @Nonnull IPVersion version, @Nullable String destinationCidr, @Nonnull String address) throws CloudException, InternalException {
+        throw new OperationNotSupportedException("Routing tables not currently supported");
+    }
+
+    @Override
+    public void addRouteToGateway(@Nonnull String toRoutingTableId, @Nonnull IPVersion version, @Nullable String destinationCidr, @Nonnull String gatewayId) throws CloudException, InternalException {
+        throw new OperationNotSupportedException("Routing tables not currently supported");
+    }
+
+    @Override
+    public void addRouteToNetworkInterface(@Nonnull String toRoutingTableId, @Nonnull IPVersion version, @Nullable String destinationCidr, @Nonnull String nicId) throws CloudException, InternalException {
+        throw new OperationNotSupportedException("NICs not yet supported");
+    }
+
+    @Override
+    public void addRouteToVirtualMachine(@Nonnull String toRoutingTableId, @Nonnull IPVersion version, @Nullable String destinationCidr, @Nonnull String vmId) throws CloudException, InternalException {
+        throw new OperationNotSupportedException("Routing tables not currently supported");
+    }
+
+    @Override
+    public boolean allowsNewNetworkInterfaceCreation() throws CloudException, InternalException {
+        return false;
+    }
+
     @Override
     public boolean allowsNewVlanCreation() throws CloudException, InternalException {
-        return cloud.getContext().getAccountNumber().equals("root");
+        ProviderContext ctx = cloud.getContext();
+
+        if( ctx == null ) {
+            throw new CloudException("No context was set for this request");
+        }
+        return "root".equals(ctx.getAccountNumber());
     }
 
     private int findId() throws CloudException, InternalException {
         NimbulaMethod method = new NimbulaMethod(cloud, "vethernet");
         
-        try {
-            method.list();
-        }
-        catch( HttpException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
-        catch( IOException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
+        method.list();
         try {
             JSONArray array = method.getResponseBody().getJSONArray("result");
             boolean found;
@@ -113,23 +138,7 @@ public class Vethernet implements VLANSupport {
     private JSONObject findVdhcpd(String vlanId) throws CloudException, InternalException {
         NimbulaMethod method = new NimbulaMethod(cloud, "vdhcpd");
         
-        try {
-            method.list();
-        }
-        catch( HttpException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
-        catch( IOException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
+        method.list();
         try {
             JSONArray array = method.getResponseBody().getJSONArray("result");
             
@@ -225,27 +234,10 @@ public class Vethernet implements VLANSupport {
     @Override
     public @Nullable VLAN getVlan(@Nonnull String vlanId) throws CloudException, InternalException {
         NimbulaMethod method = new NimbulaMethod(cloud, "vethernet");
-     
-        try {
-            int code = method.get(vlanId);
+        int code = method.get(vlanId);
             
-            if( code == 404 || code == 401 ) {
-                return null;
-            }
-        }
-        catch( HttpException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
-        catch( IOException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
+        if( code == 404 || code == 401 ) {
+            return null;
         }
         try {
             VLAN vlan = toVlan(method.getResponseBody());
@@ -263,31 +255,20 @@ public class Vethernet implements VLANSupport {
     }
 
     @Override
+    public boolean isNetworkInterfaceSupportEnabled() throws CloudException, InternalException {
+        return false;
+    }
+
+    @Override
     public boolean isSubscribed() throws CloudException, InternalException {
         return true;
     }
 
     @Override
-    public Iterable<VLAN> listVlans() throws CloudException, InternalException {
+    public @Nonnull Iterable<VLAN> listVlans() throws CloudException, InternalException {
         NimbulaMethod method = new NimbulaMethod(cloud, "vethernet");
         
-        try {
-            method.list();
-        }
-        catch( HttpException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
-        catch( IOException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
+        method.list();
         try {
             ArrayList<VLAN> vlans = new ArrayList<VLAN>();
             JSONArray array = method.getResponseBody().getJSONArray("result");
@@ -312,15 +293,40 @@ public class Vethernet implements VLANSupport {
     }
 
     @Override
-    public Subnet createSubnet(String cidr, String inProviderVlanId, String name, String description) throws CloudException, InternalException {
-        throw new OperationNotSupportedException();
+    public void removeInternetGateway(@Nonnull String forVlanId) throws CloudException, InternalException {
+        throw new OperationNotSupportedException("No internet gateway support");
+    }
+
+    @Override
+    public void removeNetworkInterface(@Nonnull String nicId) throws CloudException, InternalException {
+        throw new OperationNotSupportedException("NICs not yet supported");
+    }
+
+    @Override
+    public void removeRoute(@Nonnull String inRoutingTableId, @Nonnull String destinationCidr) throws CloudException, InternalException {
+        throw new OperationNotSupportedException("Routing tables not yet supported");
+    }
+
+    @Override
+    public void removeRoutingTable(@Nonnull String routingTableId) throws CloudException, InternalException {
+        throw new OperationNotSupportedException("Routing tables not yet supported");
+    }
+
+    @Override
+    public @Nonnull Subnet createSubnet(@Nonnull String cidr, @Nonnull String inProviderVlanId, @Nonnull String name, @Nonnull String description) throws CloudException, InternalException {
+        throw new OperationNotSupportedException("Subnets are not supported");
     }
     
     
     @Override
-    public VLAN createVlan(String cidr, String name, String description, String domainName, String[] dnsServers, String[] ntpServers) throws CloudException, InternalException {
-        if( !cloud.getContext().getAccountNumber().equals("root") ) {
-            throw new OperationNotSupportedException("VLAN creation is not yet supported");
+    public @Nonnull VLAN createVlan(@Nonnull String cidr, @Nonnull String name, @Nonnull String description, @Nonnull String domainName, @Nonnull String[] dnsServers, @Nonnull String[] ntpServers) throws CloudException, InternalException {
+        ProviderContext ctx = cloud.getContext();
+
+        if( ctx == null ) {
+            throw new CloudException("No context was set for this request");
+        }
+        if( !"root".equals(ctx.getAccountNumber()) ) {
+            throw new OperationNotSupportedException("VLAN creation is not yet supported for non-root");
         }
         int id = findId();
         
@@ -365,23 +371,8 @@ public class Vethernet implements VLANSupport {
         }
         NimbulaMethod method = new NimbulaMethod(cloud, "vethernet");
         
-        try {
-            method.post(state);
-        }
-        catch( HttpException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
-        catch( IOException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
+        method.post(state);
+
         VLAN vlan;
         
         try {
@@ -456,47 +447,26 @@ public class Vethernet implements VLANSupport {
         state.put("iprouter", cidr.subSequence(0,slash));
         method = new NimbulaMethod(cloud, VDHCPD);
         
-        try {
-            method.post(state);
-        }
-        catch( HttpException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
-        catch( IOException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
+        method.post(state);
         return vlan;
+    }
+
+    @Override
+    public void detachNetworkInterface(@Nonnull String nicId) throws CloudException, InternalException {
+        throw new OperationNotSupportedException("NICs not yet supported");
+    }
+
+    @Override
+    public int getMaxNetworkInterfaceCount() throws CloudException, InternalException {
+        return 0;
     }
 
     @Override
     public void removeVlan(String vlanId) throws CloudException, InternalException {
         NimbulaMethod method = new NimbulaMethod(cloud, "vethernet");
         
-        try {
-            method.delete(vlanId);
-        }
-        catch( HttpException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
-        catch( IOException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error in API call: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new CloudException(e);
-        }
+        method.delete(vlanId);
+
         JSONObject ob = findVdhcpd(vlanId);
         
         if( ob != null ) {
@@ -504,30 +474,26 @@ public class Vethernet implements VLANSupport {
             try {
                 method.delete(ob.getString("name"));
             }
-            catch( HttpException e ) {
-                if( logger.isDebugEnabled() ) {
-                    logger.error("Error in API call: " + e.getMessage());
-                    e.printStackTrace();
-                }
-                throw new CloudException(e);
-            }
-            catch( IOException e ) {
-                if( logger.isDebugEnabled() ) {
-                    logger.error("Error in API call: " + e.getMessage());
-                    e.printStackTrace();
-                }
-                throw new CloudException(e);
-            }     
             catch( JSONException e ) {
                 if( logger.isDebugEnabled() ) {
                     logger.error("Error parsing JSON: " + e.getMessage());
                     e.printStackTrace();
                 }
-                throw new InternalException(e);
-            }             
+                throw new CloudException(e);
+            }
         }
     }
-    
+
+    @Override
+    public boolean supportsInternetGatewayCreation() throws CloudException, InternalException {
+        return false;
+    }
+
+    @Override
+    public boolean supportsRawAddressRouting() throws CloudException, InternalException {
+        return false;
+    }
+
     private void setNetwork(VLAN vlan) throws CloudException, InternalException {
         try {
             JSONObject ob = findVdhcpd(vlan.getProviderVlanId());
@@ -535,8 +501,6 @@ public class Vethernet implements VLANSupport {
             if( ob != null ) {
                 vlan.setDnsServers(new String[] { ob.getString("dns_server"), ob.getString("dns_server_standby") });
                 vlan.setCidr(ob.getString("iprange_start") + "/" + ob.getString("iprange_mask"));
-                vlan.setGateway(ob.getString("iprouter"));
-                return;                
             }
         }
         catch( JSONException e ) {
@@ -553,16 +517,34 @@ public class Vethernet implements VLANSupport {
         return new String[0];
     }
 
-    private VLAN toVlan(JSONObject ob) throws JSONException {
+    private @Nullable VLAN toVlan(@Nullable JSONObject ob) throws JSONException, CloudException {
+        if( ob == null ) {
+            return null;
+        }
+        ProviderContext ctx = cloud.getContext();
+
+        if( ctx == null ) {
+            throw new CloudException("No context was set for this request");
+        }
+        String regionId = ctx.getRegionId();
+
+        if( regionId == null ) {
+            throw new CloudException("No region was set for this request");
+        }
         String name = ob.getString("name");
         VLAN vlan = new VLAN();
         String[] idInfo = cloud.parseId(name);
 
-        vlan.setDescription(ob.getString("description"));
         vlan.setName(idInfo[2]);
+        vlan.setDescription(idInfo[2]);
+        vlan.setSupportedTraffic(new IPVersion[]{IPVersion.IPV4});
+        vlan.setCurrentState(VLANState.AVAILABLE);
+        if( ob.has("description") ) {
+            vlan.setDescription(ob.getString("description"));
+        }
         vlan.setProviderVlanId(name);
         vlan.setProviderOwnerId(idInfo[0]);
-        vlan.setProviderRegionId(cloud.getContext().getRegionId());
+        vlan.setProviderRegionId(regionId);
         vlan.setProviderDataCenterId(vlan.getProviderRegionId() + "-a");
         return vlan;
     }
@@ -573,23 +555,78 @@ public class Vethernet implements VLANSupport {
     }
 
     @Override
-    public String getProviderTermForNetworkInterface(Locale locale) {
-        return "network interface";
+    public void assignRoutingTableToSubnet(@Nonnull String subnetId, @Nonnull String routingTableId) throws CloudException, InternalException {
+        throw new OperationNotSupportedException("Routing tables not supported");
     }
 
     @Override
-    public String getProviderTermForSubnet(Locale locale) {
+    public void assignRoutingTableToVlan(@Nonnull String vlanId, @Nonnull String routingTableId) throws CloudException, InternalException {
+        throw new OperationNotSupportedException("Routing tables not supported");
+    }
+
+    @Override
+    public void attachNetworkInterface(@Nonnull String nicId, @Nonnull String vmId, int index) throws CloudException, InternalException {
+        throw new OperationNotSupportedException("NICs tables not yet supported");
+    }
+
+    @Override
+    public String createInternetGateway(@Nonnull String forVlanId) throws CloudException, InternalException {
+        throw new OperationNotSupportedException("Internet gateways not supported");
+    }
+
+    @Override
+    public @Nonnull String createRoutingTable(@Nonnull String forVlanId, @Nonnull String name, @Nonnull String description) throws CloudException, InternalException {
+        throw new OperationNotSupportedException("Routing tables not currently supported");
+    }
+
+    @Override
+    public @Nonnull NetworkInterface createNetworkInterface(@Nonnull NICCreateOptions options) throws CloudException, InternalException {
+        throw new OperationNotSupportedException("NICs not yet supported");
+    }
+
+    @Override
+    public @Nonnull String getProviderTermForNetworkInterface(@Nonnull Locale locale) {
+        return "NIC";
+    }
+
+    @Override
+    public @Nonnull String getProviderTermForSubnet(@Nonnull Locale locale) {
         return "subnet";
     }
 
     @Override
-    public String getProviderTermForVlan(Locale locale) {
+    public @Nonnull String getProviderTermForVlan(@Nonnull Locale locale) {
         return "vethernet";
     }
 
     @Override
-    public Subnet getSubnet(String subnetId) throws CloudException, InternalException {
+    public NetworkInterface getNetworkInterface(@Nonnull String nicId) throws CloudException, InternalException {
         return null;
+    }
+
+    @Override
+    public RoutingTable getRoutingTableForSubnet(@Nonnull String subnetId) throws CloudException, InternalException {
+        return null;
+    }
+
+    @Override
+    public @Nonnull Requirement getRoutingTableSupport() throws CloudException, InternalException {
+        return Requirement.NONE;
+    }
+
+    @Override
+    public RoutingTable getRoutingTableForVlan(@Nonnull String vlanId) throws CloudException, InternalException {
+        return null;
+    }
+
+    @Override
+    public Subnet getSubnet(@Nonnull String subnetId) throws CloudException, InternalException {
+        return null;
+    }
+
+    @Override
+    public @Nonnull Requirement getSubnetSupport() throws CloudException, InternalException {
+        return Requirement.NONE;
     }
 
     @Override
@@ -603,22 +640,47 @@ public class Vethernet implements VLANSupport {
     }
 
     @Override
-    public Iterable<NetworkInterface> listNetworkInterfaces(String forVmId) throws CloudException, InternalException {
+    public @Nonnull Collection<String> listFirewallIdsForNIC(@Nonnull String nicId) throws CloudException, InternalException {
         return Collections.emptyList();
     }
 
     @Override
-    public Iterable<Subnet> listSubnets(String inVlanId) throws CloudException, InternalException {
+    public @Nonnull Iterable<NetworkInterface> listNetworkInterfaces() throws CloudException, InternalException {
         return Collections.emptyList();
+    }
+
+    @Override
+    public @Nonnull Iterable<NetworkInterface> listNetworkInterfacesForVM(@Nonnull String forVmId) throws CloudException, InternalException {
+        return Collections.emptyList();
+    }
+
+    @Override
+    public @Nonnull Iterable<NetworkInterface> listNetworkInterfacesInSubnet(@Nonnull String subnetId) throws CloudException, InternalException {
+        return Collections.emptyList();
+    }
+
+    @Override
+    public @Nonnull Iterable<NetworkInterface> listNetworkInterfacesInVLAN(@Nonnull String vlanId) throws CloudException, InternalException {
+        return Collections.emptyList();
+    }
+
+    @Override
+    public @Nonnull Iterable<RoutingTable> listRoutingTables(@Nonnull String inVlanId) throws CloudException, InternalException {
+        return Collections.emptyList();
+    }
+
+    @Override
+    public @Nonnull Iterable<Subnet> listSubnets(@Nonnull String inVlanId) throws CloudException, InternalException {
+        return Collections.emptyList();
+    }
+
+    @Override
+    public @Nonnull Iterable<IPVersion> listSupportedIPVersions() throws CloudException, InternalException {
+        return Collections.singletonList(IPVersion.IPV4);
     }
 
     @Override
     public void removeSubnet(String providerSubnetId) throws CloudException, InternalException {
-        throw new OperationNotSupportedException();
-    }
-
-    @Override
-    public boolean supportsVlansWithSubnets() throws CloudException, InternalException {
-        return false;
+        throw new OperationNotSupportedException("Subnets are not supported");
     }
 }

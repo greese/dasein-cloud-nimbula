@@ -20,6 +20,7 @@ package org.dasein.cloud.nimbula;
 
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -29,29 +30,34 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.servlet.http.HttpServletResponse;
 
-import org.apache.commons.httpclient.Header;
-import org.apache.commons.httpclient.HttpClient;
-import org.apache.commons.httpclient.HttpMethod;
-import org.apache.commons.httpclient.cookie.CookiePolicy;
-import org.apache.commons.httpclient.methods.DeleteMethod;
-import org.apache.commons.httpclient.methods.GetMethod;
-import org.apache.commons.httpclient.methods.PostMethod;
-import org.apache.commons.httpclient.methods.PutMethod;
-import org.apache.commons.httpclient.methods.StringRequestEntity;
-import org.apache.commons.httpclient.protocol.Protocol;
-import org.apache.commons.httpclient.protocol.ProtocolSocketFactory;
-
+import org.apache.http.Header;
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpHost;
+import org.apache.http.HttpResponse;
+import org.apache.http.HttpVersion;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.HttpDelete;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpPut;
+import org.apache.http.conn.params.ConnRoutePNames;
+import org.apache.http.entity.StringEntity;
+import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.params.BasicHttpParams;
+import org.apache.http.params.HttpParams;
+import org.apache.http.params.HttpProtocolParams;
+import org.apache.http.protocol.HTTP;
+import org.apache.http.util.EntityUtils;
 import org.apache.log4j.Logger;
 import org.dasein.cloud.CloudException;
 import org.dasein.cloud.InternalException;
 import org.dasein.cloud.ProviderContext;
-import org.dasein.cloud.util.EasySsl;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 public class NimbulaMethod {
-    //static private final Logger logger     = NimbulaDirector.getLogger(NimbulaMethod.class);
-    static private final Logger wireLogger = NimbulaDirector.getWireLogger(NimbulaMethod.class);
+    static private final Logger logger  = NimbulaDirector.getLogger(NimbulaMethod.class);
+    static private final Logger wire    = NimbulaDirector.getWireLogger(NimbulaMethod.class);
     
     private String             authCookie  = null;
     private NimbulaDirector    cloud       = null;
@@ -72,10 +78,13 @@ public class NimbulaMethod {
         if( properties != null ) {
             ignoreCertSignature = properties.getProperty("ignoreCertSignature", "false");
         }
+
         if( ignoreCertSignature != null && ignoreCertSignature.equalsIgnoreCase("true") ) {
+            /*
             ProtocolSocketFactory sf = new EasySsl();
             Protocol easyhttps = new Protocol("https", sf, 443 );
             Protocol.registerProtocol( "https", easyhttps );
+            */
         }
         this.cloud = cloud;
         url = cloud.getURL(resource);
@@ -87,53 +96,140 @@ public class NimbulaMethod {
         }
     }
 
-    private void authenticate() throws IOException, CloudException, InternalException {
-        if( authCookie != null ) {
-            return;
-        }
-        ProviderContext ctx = cloud.getContext();
+    private @Nonnull HttpClient getClient(@Nonnull ProviderContext ctx, boolean ssl) {
+        HttpParams params = new BasicHttpParams();
 
-        if( ctx == null ) {
-            throw new CloudException("Unable to authenticate without a context");
-        }
-        HttpClient client = getClient();
-        PostMethod post = new PostMethod(cloud.getURL("authenticate") + "/");
-        HashMap<String,Object> request = new HashMap<String,Object>();
+        HttpProtocolParams.setVersion(params, HttpVersion.HTTP_1_1);
+        //noinspection deprecation
+        HttpProtocolParams.setContentCharset(params, HTTP.UTF_8);
+        HttpProtocolParams.setUserAgent(params, "Dasein Cloud");
 
-        request.put("user", "/" + ctx.getAccountNumber() + "/" + new String(ctx.getAccessPublic(), "utf-8"));
-        request.put("password", new String(ctx.getAccessPrivate(), "utf-8"));
-        post.addRequestHeader("Accept", "application/nimbula-v2+json");
-        post.getParams().setCookiePolicy(CookiePolicy.IGNORE_COOKIES);
-        post.setRequestEntity(new StringRequestEntity((new JSONObject(request)).toString(), "application/nimbula-v2+json", "UTF-8"));
-        if( wireLogger.isDebugEnabled() ) {
-            wireLogger.debug("POST " + post.getPath());
-            for( Header header : post.getRequestHeaders() ) {
-                wireLogger.debug(header.getName() + ": " + header.getValue());
-            }
-            String body = ((new JSONObject(request)).toString());
-            String[] lines = body.split("\n");
-            
-            if( lines == null || lines.length < 1 ) {
-                lines = new String[] { body };
-            }
-            for( String line : lines ) {
-                wireLogger.debug(" -> " + line.trim());
+        Properties p = ctx.getCustomProperties();
+
+        if( p != null ) {
+            String proxyHost = p.getProperty("proxyHost");
+            String proxyPort = p.getProperty("proxyPort");
+
+            if( proxyHost != null ) {
+                int port = 0;
+
+                if( proxyPort != null && proxyPort.length() > 0 ) {
+                    port = Integer.parseInt(proxyPort);
+                }
+                params.setParameter(ConnRoutePNames.DEFAULT_PROXY, new HttpHost(proxyHost, port, ssl ? "https" : "http"));
             }
         }
-        int code = client.executeMethod(post);
-        
-        wireLogger.debug("HTTP STATUS: " + code);
-        if( code != HttpServletResponse.SC_NO_CONTENT ) {
-            response = post.getResponseBodyAsString();
-            if( wireLogger.isDebugEnabled() ) {
-                wireLogger.debug(response);
+        return new DefaultHttpClient(params);
+    }
+
+    private void authenticate() throws CloudException, InternalException {
+        if( logger.isTraceEnabled() ) {
+            logger.trace("ENTER - " + NimbulaMethod.class.getName() + ".authenticate()");
+        }
+        try {
+            if( authCookie != null ) {
+                return;
+            }
+            String uri = cloud.getURL("authenticate") + "/";
+
+            if( wire.isDebugEnabled() ) {
+                wire.debug("");
+                wire.debug(">>> [POST (" + (new Date()) + ")] -> " + uri + " >--------------------------------------------------------------------------------------");
+            }
+            try {
+                ProviderContext ctx = cloud.getContext();
+
+                if( ctx == null ) {
+                    throw new CloudException("Unable to authenticate without a context");
+                }
+                HttpClient client = getClient(ctx, uri.startsWith("https"));
+                HttpPost post = new HttpPost(uri);
+                HashMap<String,Object> request = new HashMap<String,Object>();
+
+                try {
+                    request.put("user", "/" + ctx.getAccountNumber() + "/" + new String(ctx.getAccessPublic(), "utf-8"));
+                    request.put("password", new String(ctx.getAccessPrivate(), "utf-8"));
+                }
+                catch( UnsupportedEncodingException e ) {
+                    throw new InternalException(e);
+                }
+                post.addHeader("Accept", "application/nimbula-v2+json");
+
+                try {
+                    //noinspection deprecation
+                    post.setEntity(new StringEntity((new JSONObject(request)).toString(), "application/nimbula-v2+json", "UTF-8"));
+                }
+                catch( UnsupportedEncodingException e ) {
+                    throw new InternalException(e);
+                }
+                if( wire.isDebugEnabled() ) {
+                    wire.debug(post.getRequestLine().toString());
+                    for( Header header : post.getAllHeaders() ) {
+                        wire.debug(header.getName() + ": " + header.getValue());
+                    }
+                    wire.debug("");
+
+                    try { wire.debug(EntityUtils.toString(post.getEntity())); }
+                    catch( IOException ignore ) { }
+
+                    wire.debug("");
+                }
+                HttpResponse response;
+
+                try {
+                    response = client.execute(post);
+                    if( wire.isDebugEnabled() ) {
+                        wire.debug(response.getStatusLine().toString());
+                        for( Header header : response.getAllHeaders() ) {
+                            wire.debug(header.getName() + ": " + header.getValue());
+                        }
+                        wire.debug("");
+                    }
+                }
+                catch( IOException e ) {
+                    logger.error("I/O error from server communications: " + e.getMessage());
+                    e.printStackTrace();
+                    throw new InternalException(e);
+                }
+                int code = response.getStatusLine().getStatusCode();
+
+                logger.debug("HTTP STATUS: " + code);
+
+                if( code != HttpServletResponse.SC_NO_CONTENT ) {
+                    HttpEntity entity = response.getEntity();
+                    String data = "";
+
+                    if( entity != null ) {
+                        try {
+                            data = EntityUtils.toString(entity);
+                        }
+                        catch( IOException e ) {
+                            throw new CloudException(e);
+                        }
+                    }
+                    if( wire.isDebugEnabled() ) {
+                        wire.debug(data);
+                        wire.debug("");
+                    }
+                }
+                checkResponse(response, code);
+            }
+            finally {
+                if( wire.isDebugEnabled() ) {
+                    wire.debug("<<< [POST (" + (new Date()) + ")] -> " + uri + " <--------------------------------------------------------------------------------------");
+                    wire.debug("");
+                }
             }
         }
-        checkResponse(post, code);
+        finally {
+            if( logger.isTraceEnabled() ) {
+                logger.trace("exit - " + NimbulaMethod.class.getName() + ".authenticate()");
+            }
+        }
     }
     
-    private void checkResponse(@Nonnull HttpMethod method, @Nonnegative int code) throws CloudException, InternalException {
-        checkResponse(method, code, null);
+    private void checkResponse(@Nonnull HttpResponse response, @Nonnegative int code) throws CloudException, InternalException {
+        checkResponse(response, code, null);
     }
     
     private @Nonnull String getErrorMessage(@Nullable String body, @Nonnull String defaultMessage) {
@@ -158,13 +254,13 @@ public class NimbulaMethod {
         return defaultMessage;
     }
     
-    private void checkResponse(@Nonnull HttpMethod method, @Nonnegative int code, @Nullable String responseBody) throws CloudException, InternalException {
+    private void checkResponse(@Nonnull HttpResponse response, @Nonnegative int code, @Nullable String responseBody) throws CloudException, InternalException {
         ProviderContext ctx = cloud.getContext();
         
         if( ctx == null ) {
             throw new CloudException("No context is set for this request");
         }
-        Header[] headers = method.getResponseHeaders("Set-Cookie");
+        Header[] headers = response.getHeaders("Set-Cookie");
 
         if( headers != null ) {
             for( Header header : headers ) {
@@ -214,95 +310,168 @@ public class NimbulaMethod {
         }
     }
     
-    public @Nonnegative int delete(@Nonnull String target) throws IOException, CloudException, InternalException {
-        authenticate();
-        
-        HttpClient client = getClient();
-        DeleteMethod delete = new DeleteMethod(getUrl(url, target));
+    public @Nonnegative int delete(@Nonnull String target) throws CloudException, InternalException {
+        if( logger.isTraceEnabled() ) {
+            logger.trace("ENTER - " + NimbulaMethod.class.getName() + ".delete(" + target + ")");
+        }
+        try {
+            authenticate();
+            String service = getUrl(url, target);
 
-        delete.addRequestHeader("Accept", "application/nimbula-v2+json");
-        delete.getParams().setCookiePolicy(CookiePolicy.IGNORE_COOKIES);
-        delete.setRequestHeader("Cookie", authCookie);
-        if( wireLogger.isDebugEnabled() ) {
-            wireLogger.debug("DELETE " + delete.getPath());
-            for( Header header : delete.getRequestHeaders() ) {
-                wireLogger.debug(header.getName() + ": " + header.getValue());
+            if( wire.isDebugEnabled() ) {
+                wire.debug("");
+                wire.debug(">>> [DELETE (" + (new Date()) + ")] -> " + service + " >--------------------------------------------------------------------------------------");
             }
-        }
-        int code = client.executeMethod(delete);
-        
-        wireLogger.debug("HTTP STATUS: " + code);
-        if( code != HttpServletResponse.SC_NO_CONTENT ) {
-            response = delete.getResponseBodyAsString();
-            if( wireLogger.isDebugEnabled() ) {
-                wireLogger.debug(response);
-            }
-        }
-        checkResponse(delete, code);
-        return code;
-    }
-    
-    public @Nonnegative int get(@Nonnull String target) throws IOException, CloudException, InternalException {
-        authenticate();
-        
-        HttpClient client = getClient();
-        if( !target.startsWith("/") ) {
-            target = getUrl(url, target);
-        }
-        else {
-            target = url + target;
-        }
-        GetMethod get = new GetMethod(target);
+            try {
+                ProviderContext ctx = cloud.getContext();
 
-        get.addRequestHeader("Accept", "application/nimbula-v2+json");
-        get.getParams().setCookiePolicy(CookiePolicy.IGNORE_COOKIES);
-        get.setRequestHeader("Cookie", authCookie);
-        if( wireLogger.isDebugEnabled() ) {
-            wireLogger.debug("GET " + get.getPath());
-            for( Header header : get.getRequestHeaders() ) {
-                wireLogger.debug(header.getName() + ": " + header.getValue());
-            }
-        }
-        int code = client.executeMethod(get);
+                if( ctx == null ) {
+                    throw new CloudException("No context was set for this request");
+                }
+                HttpClient client = getClient(ctx, service.startsWith("https"));
+                HttpDelete delete = new HttpDelete(service);
 
-        wireLogger.debug("HTTP STATUS: " + code);
-        if( code == 401 ) {
-            return code;
-        }
-        if( code != HttpServletResponse.SC_NO_CONTENT ) {
-            response = get.getResponseBodyAsString();
-            if( wireLogger.isDebugEnabled() ) {
-                wireLogger.debug(response);
-            }
-        }
-        checkResponse(get, code);
-        return code;
-    }   
-    
-    private @Nonnull HttpClient getClient() {
-        ProviderContext ctx = cloud.getContext();
-        HttpClient client = new HttpClient();
-
-        if( ctx != null ) {
-            Properties p = ctx.getCustomProperties();
-
-            if( p != null ) {
-                String proxyHost = p.getProperty("proxyHost");
-                String proxyPort = p.getProperty("proxyPort");
-
-                if( proxyHost != null ) {
-                    int port = 0;
-
-                    if( proxyPort != null && proxyPort.length() > 0 ) {
-                        port = Integer.parseInt(proxyPort);
+                delete.addHeader("Accept", "application/nimbula-v2+json");
+                delete.setHeader("Cookie", authCookie);
+                if( wire.isDebugEnabled() ) {
+                    wire.debug(delete.getRequestLine().toString());
+                    for( Header header : delete.getAllHeaders() ) {
+                        wire.debug(header.getName() + ": " + header.getValue());
                     }
-                    client.getHostConfiguration().setProxy(proxyHost, port);
+                    wire.debug("");
+                }
+                HttpResponse response;
+
+                try {
+                    response = client.execute(delete);
+                    if( wire.isDebugEnabled() ) {
+                        wire.debug(response.getStatusLine().toString());
+                        for( Header header : response.getAllHeaders() ) {
+                            wire.debug(header.getName() + ": " + header.getValue());
+                        }
+                        wire.debug("");
+                    }
+                }
+                catch( IOException e ) {
+                    logger.error("I/O error from server communications: " + e.getMessage());
+                    e.printStackTrace();
+                    throw new InternalException(e);
+                }
+                int code = response.getStatusLine().getStatusCode();
+
+                logger.debug("HTTP STATUS: " + code);
+                checkResponse(response, code);
+                return code;
+            }
+            finally {
+                if( wire.isDebugEnabled() ) {
+                    wire.debug("<<< [DELETE (" + (new Date()) + ")] -> " + service + " <--------------------------------------------------------------------------------------");
+                    wire.debug("");
                 }
             }
         }
-        return client;
+        finally {
+            if( logger.isTraceEnabled() ) {
+                logger.trace("exit - " + NimbulaMethod.class.getName() + ".delete()");
+            }
+        }
     }
     
+    public @Nonnegative int get(@Nonnull String target) throws CloudException, InternalException {
+        if( logger.isTraceEnabled() ) {
+            logger.trace("ENTER - " + NimbulaMethod.class.getName() + ".get(" + target + ")");
+        }
+        try {
+            authenticate();
+
+            if( !target.startsWith("/") ) {
+                target = getUrl(url, target);
+            }
+            else {
+                target = url + target;
+            }
+
+            if( wire.isDebugEnabled() ) {
+                wire.debug("");
+                wire.debug(">>> [GET (" + (new Date()) + ")] -> " + target + " >--------------------------------------------------------------------------------------");
+            }
+            try {
+                ProviderContext ctx = cloud.getContext();
+
+                if( ctx == null ) {
+                    throw new CloudException("No context was set for this request");
+                }
+                HttpClient client = getClient(ctx, target.startsWith("https"));
+                HttpGet get = new HttpGet(target);
+
+                get.addHeader("Accept", "application/nimbula-v2+json");
+                get.setHeader("Cookie", authCookie);
+
+                if( wire.isDebugEnabled() ) {
+                    wire.debug(get.getRequestLine().toString());
+                    for( Header header : get.getAllHeaders() ) {
+                        wire.debug(header.getName() + ": " + header.getValue());
+                    }
+                    wire.debug("");
+                }
+                HttpResponse response;
+
+                try {
+                    response = client.execute(get);
+                    if( wire.isDebugEnabled() ) {
+                        wire.debug(response.getStatusLine().toString());
+                        for( Header header : response.getAllHeaders() ) {
+                            wire.debug(header.getName() + ": " + header.getValue());
+                        }
+                        wire.debug("");
+                    }
+                }
+                catch( IOException e ) {
+                    logger.error("I/O error from server communications: " + e.getMessage());
+                    e.printStackTrace();
+                    throw new InternalException(e);
+                }
+                int code = response.getStatusLine().getStatusCode();
+
+                logger.debug("HTTP STATUS: " + code);
+
+                if( code == 401 ) {
+                    return code;
+                }
+                if( code != HttpServletResponse.SC_NO_CONTENT ) {
+                    HttpEntity entity = response.getEntity();
+
+                    if( entity != null ) {
+                        try {
+                            this.response = EntityUtils.toString(entity);
+
+                            if( wire.isDebugEnabled() ) {
+                                wire.debug(this.response);
+                                wire.debug("");
+                            }
+                        }
+                        catch( IOException e ) {
+                            throw new CloudException(e);
+                        }
+                    }
+                }
+                checkResponse(response, code);
+                return code;
+            }
+            finally {
+                if( wire.isDebugEnabled() ) {
+                    wire.debug("<<< [GET (" + (new Date()) + ")] -> " + target + " <--------------------------------------------------------------------------------------");
+                    wire.debug("");
+                }
+            }
+        }
+        finally {
+            if( logger.isTraceEnabled() ) {
+                logger.trace("exit - " + NimbulaMethod.class.getName() + ".get()");
+            }
+        }
+    }
+
     public @Nonnull JSONObject getResponseBody() throws JSONException {
         return new JSONObject(response);
     }
@@ -348,162 +517,391 @@ public class NimbulaMethod {
         }
     }
     
-    public @Nonnegative int list() throws IOException, CloudException, InternalException {
-        ProviderContext ctx = cloud.getContext();
+    public @Nonnegative int list() throws CloudException, InternalException {
+        if( logger.isTraceEnabled() ) {
+            logger.trace("ENTER - " + NimbulaMethod.class.getName() + ".list()");
+        }
+        try {
+            ProviderContext ctx = cloud.getContext();
 
-        if( ctx == null ) {
-            throw new CloudException("No context was set for this request");
-        }
-        authenticate();
-        
-        HttpClient client = getClient();
-        GetMethod get;
-        
-        if( url.endsWith("info") ) {
-            get = new GetMethod(url + "/");
-        }
-        else {
-            get = new GetMethod(url + "/" + ctx.getAccountNumber() + "/");
-        }
-        get.addRequestHeader("Accept", "application/nimbula-v2+json");
-        get.getParams().setCookiePolicy(CookiePolicy.IGNORE_COOKIES);
-        get.setRequestHeader("Cookie", authCookie);
-        if( wireLogger.isDebugEnabled() ) {
-            wireLogger.debug("GET " + get.getPath());
-            for( Header header : get.getRequestHeaders() ) {
-                wireLogger.debug(header.getName() + ": " + header.getValue());
+            if( ctx == null ) {
+                throw new CloudException("No context was set for this request");
+            }
+            authenticate();
+
+            String target;
+
+            if( url.endsWith("info") ) {
+                target = url + "/";
+            }
+            else {
+                target = url + "/" + ctx.getAccountNumber() + "/";
+            }
+            if( wire.isDebugEnabled() ) {
+                wire.debug("");
+                wire.debug(">>> [GET (" + (new Date()) + ")] -> " + target + " >--------------------------------------------------------------------------------------");
+            }
+            try {
+                HttpClient client = getClient(ctx, target.startsWith("https"));
+                HttpGet get = new HttpGet(target);
+
+                get.addHeader("Accept", "application/nimbula-v2+json");
+                get.setHeader("Cookie", authCookie);
+
+                if( wire.isDebugEnabled() ) {
+                    wire.debug(get.getRequestLine().toString());
+                    for( Header header : get.getAllHeaders() ) {
+                        wire.debug(header.getName() + ": " + header.getValue());
+                    }
+                    wire.debug("");
+                }
+                HttpResponse response;
+
+                try {
+                    response = client.execute(get);
+                    if( wire.isDebugEnabled() ) {
+                        wire.debug(response.getStatusLine().toString());
+                        for( Header header : response.getAllHeaders() ) {
+                            wire.debug(header.getName() + ": " + header.getValue());
+                        }
+                        wire.debug("");
+                    }
+                }
+                catch( IOException e ) {
+                    logger.error("I/O error from server communications: " + e.getMessage());
+                    e.printStackTrace();
+                    throw new InternalException(e);
+                }
+                int code = response.getStatusLine().getStatusCode();
+
+                logger.debug("HTTP STATUS: " + code);
+
+                if( code != HttpServletResponse.SC_NO_CONTENT ) {
+                    HttpEntity entity = response.getEntity();
+
+                    if( entity != null ) {
+                        try {
+                            this.response = EntityUtils.toString(entity);
+                            if( wire.isDebugEnabled() ) {
+                                wire.debug(this.response);
+                                wire.debug("");
+                            }
+                        }
+                        catch( IOException e ) {
+                            throw new CloudException(e);
+                        }
+                    }
+                }
+                checkResponse(response, code);
+                return code;
+            }
+            finally {
+                if( wire.isDebugEnabled() ) {
+                    wire.debug("<<< [GET (" + (new Date()) + ")] -> " + target + " <--------------------------------------------------------------------------------------");
+                    wire.debug("");
+                }
             }
         }
-        int code = client.executeMethod(get);
-
-        wireLogger.debug("HTTP STATUS: " + code);
-        if( code != HttpServletResponse.SC_NO_CONTENT ) {
-            response = get.getResponseBodyAsString();
-            if( wireLogger.isDebugEnabled() ) {
-                wireLogger.debug(response);
+        finally {
+            if( logger.isTraceEnabled() ) {
+                logger.trace("exit - " + NimbulaMethod.class.getName() + ".list()");
             }
         }
-        checkResponse(get, code);
-        return code;        
     }
     
     @SuppressWarnings("unused")
-    public @Nonnegative int discover() throws IOException, CloudException, InternalException {
+    public @Nonnegative int discover() throws CloudException, InternalException {
         return discover(null);
     }
     
-    public @Nonnegative int discover(@Nullable String userId) throws IOException, CloudException, InternalException {
-        ProviderContext ctx = cloud.getContext();
-        
-        if( ctx == null ) {
-            throw new CloudException("No context was set for this request");
+    public @Nonnegative int discover(@Nullable String userId) throws CloudException, InternalException {
+        if( logger.isTraceEnabled() ) {
+            logger.trace("ENTER - " + NimbulaMethod.class.getName() + ".discover(" + userId + ")");
         }
-        authenticate();
-        String target = "/" + ctx.getAccountNumber() + "/";
-        
-        if( userId != null ) {
-            target = target + userId + "/";
-        }
-        HttpClient client = getClient();
-        GetMethod get = new GetMethod(url + target);
+        try {
+            authenticate();
 
-        get.addRequestHeader("Accept", "application/nimbula-v2+directory+json");
-        get.getParams().setCookiePolicy(CookiePolicy.IGNORE_COOKIES);
-        get.setRequestHeader("Cookie", authCookie);
-        if( wireLogger.isDebugEnabled() ) {
-            wireLogger.debug("GET " + get.getPath());
-            for( Header header : get.getRequestHeaders() ) {
-                wireLogger.debug(header.getName() + ": " + header.getValue());
+            ProviderContext ctx = cloud.getContext();
+
+            if( ctx == null ) {
+                throw new CloudException("No context was set for this request");
+            }
+
+            String target = "/" + ctx.getAccountNumber() + "/";
+
+            if( userId != null ) {
+                target = target + userId + "/";
+            }
+            target = url + target;
+
+            if( wire.isDebugEnabled() ) {
+                wire.debug("");
+                wire.debug(">>> [GET (" + (new Date()) + ")] -> " + target + " >--------------------------------------------------------------------------------------");
+            }
+            try {
+                HttpClient client = getClient(ctx, target.startsWith("https"));
+                HttpGet get = new HttpGet(target);
+
+                get.addHeader("Accept", "application/nimbula-v2+directory+json");
+                get.setHeader("Cookie", authCookie);
+
+                if( wire.isDebugEnabled() ) {
+                    wire.debug(get.getRequestLine().toString());
+                    for( Header header : get.getAllHeaders() ) {
+                        wire.debug(header.getName() + ": " + header.getValue());
+                    }
+                    wire.debug("");
+                }
+                HttpResponse response;
+
+                try {
+                    response = client.execute(get);
+                    if( wire.isDebugEnabled() ) {
+                        wire.debug(response.getStatusLine().toString());
+                        for( Header header : response.getAllHeaders() ) {
+                            wire.debug(header.getName() + ": " + header.getValue());
+                        }
+                        wire.debug("");
+                    }
+                }
+                catch( IOException e ) {
+                    logger.error("I/O error from server communications: " + e.getMessage());
+                    e.printStackTrace();
+                    throw new InternalException(e);
+                }
+                int code = response.getStatusLine().getStatusCode();
+
+                logger.debug("HTTP STATUS: " + code);
+
+                if( code != HttpServletResponse.SC_NO_CONTENT ) {
+                    HttpEntity entity = response.getEntity();
+
+                    if( entity != null ) {
+                        try {
+                            this.response = EntityUtils.toString(entity);
+                            if( wire.isDebugEnabled() ) {
+                                wire.debug(this.response);
+                                wire.debug("");
+                            }
+                        }
+                        catch( IOException e ) {
+                            throw new CloudException(e);
+                        }
+                    }
+                }
+                checkResponse(response, code);
+                return code;
+            }
+            finally {
+                if( wire.isDebugEnabled() ) {
+                    wire.debug("<<< [GET (" + (new Date()) + ")] -> " + target + " <--------------------------------------------------------------------------------------");
+                    wire.debug("");
+                }
             }
         }
-        int code = client.executeMethod(get);
-
-        wireLogger.debug("HTTP STATUS: " + code);
-        if( code != HttpServletResponse.SC_NO_CONTENT ) {
-            response = get.getResponseBodyAsString();
-            if( wireLogger.isDebugEnabled() ) {
-                wireLogger.debug(response);
+        finally {
+            if( logger.isTraceEnabled() ) {
+                logger.trace("exit - " + NimbulaMethod.class.getName() + ".discover()");
             }
         }
-        checkResponse(get, code);
-        return code;        
     }
     
-    public @Nonnegative int post(@Nonnull Map<String,Object> state) throws IOException, CloudException, InternalException {
-        authenticate();
-        HttpClient client = getClient();
-        PostMethod post = new PostMethod(url + "/");
+    public @Nonnegative int post(@Nonnull Map<String,Object> state) throws CloudException, InternalException {
+        if( logger.isTraceEnabled() ) {
+            logger.trace("ENTER - " + NimbulaMethod.class.getName() + ".post(" + state + ")");
+        }
+        try {
+            authenticate();
+            if( wire.isDebugEnabled() ) {
+                wire.debug("");
+                wire.debug(">>> [POST (" + (new Date()) + ")] -> " + url + "/ >--------------------------------------------------------------------------------------");
+            }
+            try {
+                ProviderContext ctx = cloud.getContext();
 
-        post.getParams().setCookiePolicy(CookiePolicy.IGNORE_COOKIES);
-        post.setRequestHeader("Cookie", authCookie);
-        post.addRequestHeader("Accept", "application/nimbula-v2+json");
-        post.setRequestEntity(new StringRequestEntity((new JSONObject(state)).toString(), "application/nimbula-v2+json", "UTF-8"));
-        if( wireLogger.isDebugEnabled() ) {
-            wireLogger.debug("POST " + post.getPath());
-            for( Header header : post.getRequestHeaders() ) {
-                wireLogger.debug(header.getName() + ": " + header.getValue());
+                if( ctx == null ) {
+                    throw new CloudException("No context was set for this request");
+                }
+                HttpClient client = getClient(ctx, url.startsWith("https"));
+                HttpPost post = new HttpPost(url + "/");
+
+                post.setHeader("Cookie", authCookie);
+                post.addHeader("Accept", "application/nimbula-v2+json");
+                try {
+                    //noinspection deprecation
+                    post.setEntity(new StringEntity((new JSONObject(state)).toString(), "application/nimbula-v2+json", "UTF-8"));
+                }
+                catch( UnsupportedEncodingException e ) {
+                    throw new InternalException(e);
+                }
+
+                if( wire.isDebugEnabled() ) {
+                    wire.debug(post.getRequestLine().toString());
+                    for( Header header : post.getAllHeaders() ) {
+                        wire.debug(header.getName() + ": " + header.getValue());
+                    }
+                    wire.debug("");
+
+                    try { wire.debug(EntityUtils.toString(post.getEntity())); }
+                    catch( IOException ignore ) { }
+
+                    wire.debug("");
+                }
+                HttpResponse response;
+
+                try {
+                    response = client.execute(post);
+                    if( wire.isDebugEnabled() ) {
+                        wire.debug(response.getStatusLine().toString());
+                        for( Header header : response.getAllHeaders() ) {
+                            wire.debug(header.getName() + ": " + header.getValue());
+                        }
+                        wire.debug("");
+                    }
+                }
+                catch( IOException e ) {
+                    logger.error("I/O error from server communications: " + e.getMessage());
+                    e.printStackTrace();
+                    throw new InternalException(e);
+                }
+                int code = response.getStatusLine().getStatusCode();
+
+                logger.debug("HTTP STATUS: " + code);
+
+                if( code != HttpServletResponse.SC_NO_CONTENT ) {
+                    HttpEntity entity = response.getEntity();
+
+                    if( entity != null ) {
+                        try {
+                            this.response = EntityUtils.toString(entity);
+                        }
+                        catch( IOException e ) {
+                            throw new CloudException(e);
+                        }
+                        if( wire.isDebugEnabled() ) {
+                            wire.debug(this.response);
+                            wire.debug("");
+                        }
+                    }
+                    checkResponse(response, code, this.response);
+                }
+                else {
+                    checkResponse(response, code);
+                }
+                return code;
             }
-            String body = ((new JSONObject(state)).toString());
-            String[] lines = body.split("\n");
-            
-            if( lines == null || lines.length < 1 ) {
-                lines = new String[] { body };
-            }
-            for( String line : lines ) {
-                wireLogger.debug(" -> " + line.trim());
+            finally {
+                if( wire.isDebugEnabled() ) {
+                    wire.debug("<<< [POST (" + (new Date()) + ")] -> " + url + "/ <--------------------------------------------------------------------------------------");
+                    wire.debug("");
+                }
             }
         }
-        int code = client.executeMethod(post);
-        
-        wireLogger.debug("HTTP STATUS: " + code);
-        if( code != HttpServletResponse.SC_NO_CONTENT ) {
-            response = post.getResponseBodyAsString();
-            if( wireLogger.isDebugEnabled() ) {
-                wireLogger.debug(response);
+        finally {
+            if( logger.isTraceEnabled() ) {
+                logger.trace("exit - " + NimbulaMethod.class.getName() + ".post()");
             }
-            checkResponse(post, code, response);
         }
-        else {
-            checkResponse(post, code);
-        }
-        return code;
     }
 
     @SuppressWarnings("unused")
-    public @Nonnegative int put(@Nonnull String targetId, @Nonnull Map<String,Object> state) throws IOException, CloudException, InternalException {
-        authenticate();
-        HttpClient client = getClient();
-        PutMethod put = new PutMethod(getUrl(url, targetId));
+    public @Nonnegative int put(@Nonnull String targetId, @Nonnull Map<String,Object> state) throws CloudException, InternalException {
+        if( logger.isTraceEnabled() ) {
+            logger.trace("ENTER - " + NimbulaMethod.class.getName() + ".put(" + targetId + "," + state + ")");
+        }
+        try {
+            authenticate();
+            String target = getUrl(url, targetId);
 
-        put.addRequestHeader("Content-Type", "application/json");
-        put.getParams().setCookiePolicy(CookiePolicy.IGNORE_COOKIES);
-        put.setRequestHeader("Cookie", authCookie);
-        put.setRequestEntity(new StringRequestEntity((new JSONObject(state)).toString(), "application/json", "UTF-8"));
-        if( wireLogger.isDebugEnabled() ) {
-            wireLogger.debug("PUT " + put.getPath());
-            for( Header header : put.getRequestHeaders() ) {
-                wireLogger.debug(header.getName() + ": " + header.getValue());
+            if( wire.isDebugEnabled() ) {
+                wire.debug("");
+                wire.debug(">>> [PUT (" + (new Date()) + ")] -> " + target + " >--------------------------------------------------------------------------------------");
             }
-            String body = ((new JSONObject(state)).toString());
-            String[] lines = body.split("\n");
-            
-            if( lines == null || lines.length < 1 ) {
-                lines = new String[] { body };
+            try {
+                ProviderContext ctx = cloud.getContext();
+
+                if( ctx == null ) {
+                    throw new CloudException("No context was set for this request");
+                }
+                HttpClient client = getClient(ctx, target.startsWith("https"));
+                HttpPut put = new HttpPut(target);
+
+                put.addHeader("Content-Type", "application/json");
+                put.setHeader("Cookie", authCookie);
+                try {
+                    //noinspection deprecation
+                    put.setEntity(new StringEntity((new JSONObject(state)).toString(), "application/json", "UTF-8"));
+                }
+                catch( UnsupportedEncodingException e ) {
+                    throw new InternalException(e);
+                }
+
+                if( wire.isDebugEnabled() ) {
+                    wire.debug(put.getRequestLine().toString());
+                    for( Header header : put.getAllHeaders() ) {
+                        wire.debug(header.getName() + ": " + header.getValue());
+                    }
+                    wire.debug("");
+
+                    try { wire.debug(EntityUtils.toString(put.getEntity())); }
+                    catch( IOException ignore ) { }
+
+                    wire.debug("");
+                }
+                HttpResponse response;
+
+                try {
+                    response = client.execute(put);
+                    if( wire.isDebugEnabled() ) {
+                        wire.debug(response.getStatusLine().toString());
+                        for( Header header : response.getAllHeaders() ) {
+                            wire.debug(header.getName() + ": " + header.getValue());
+                        }
+                        wire.debug("");
+                    }
+                }
+                catch( IOException e ) {
+                    logger.error("I/O error from server communications: " + e.getMessage());
+                    e.printStackTrace();
+                    throw new InternalException(e);
+                }
+                int code = response.getStatusLine().getStatusCode();
+
+                logger.debug("HTTP STATUS: " + code);
+
+                if( code != HttpServletResponse.SC_NO_CONTENT ) {
+                    HttpEntity entity = response.getEntity();
+
+                    if( entity != null ) {
+                        try {
+                            this.response = EntityUtils.toString(entity);
+                        }
+                        catch( IOException e ) {
+                            throw new CloudException(e);
+                        }
+                        if( wire.isDebugEnabled() ) {
+                            wire.debug(this.response);
+                            wire.debug("");
+                        }
+                    }
+                    checkResponse(response, code, this.response);
+                }
+                else {
+                    checkResponse(response, code);
+                }
+                return code;
             }
-            for( String line : lines ) {
-                wireLogger.debug(" -> " + line.trim());
+            finally {
+                if( wire.isDebugEnabled() ) {
+                    wire.debug("<<< [PUT (" + (new Date()) + ")] -> " + url + "/ <--------------------------------------------------------------------------------------");
+                    wire.debug("");
+                }
             }
         }
-        int code = client.executeMethod(put);
-        
-        wireLogger.debug("HTTP STATUS: " + code);
-        if( code != HttpServletResponse.SC_NO_CONTENT ) {
-            response = put.getResponseBodyAsString();
-            if( wireLogger.isDebugEnabled() ) {
-                wireLogger.debug(response);
+        finally {
+            if( logger.isTraceEnabled() ) {
+                logger.trace("exit - " + NimbulaMethod.class.getName() + ".put()");
             }
         }
-        checkResponse(put, code);
-        return code;
     }
 }

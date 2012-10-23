@@ -18,20 +18,17 @@
 
 package org.dasein.cloud.nimbula;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Locale;
 
-import org.apache.commons.httpclient.HttpException;
 import org.dasein.cloud.CloudException;
 import org.dasein.cloud.InternalException;
 import org.dasein.cloud.ProviderContext;
 import org.dasein.cloud.dc.DataCenter;
 import org.dasein.cloud.dc.DataCenterServices;
 import org.dasein.cloud.dc.Region;
-import org.dasein.cloud.network.Firewall;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -107,15 +104,7 @@ public class Site implements DataCenterServices {
     public @Nonnull Collection<Region> listRegions() throws InternalException, CloudException {
         NimbulaMethod method = new NimbulaMethod(cloud, "info");
 
-        try {
-            method.list();
-        }
-        catch( HttpException e ) {
-            throw new CloudException(e);
-        }
-        catch( IOException e ) {
-            throw new CloudException(e);
-        }
+        method.list();
         try {
             ArrayList<Region> regions = new ArrayList<Region>();
             JSONArray array = method.getResponseBody().getJSONArray("result");
