@@ -557,6 +557,15 @@ public class Instance implements VirtualMachineSupport {
         else if( value.equalsIgnoreCase("terminating") ) {
             return VmState.STOPPING;
         }
+        else if( value.equalsIgnoreCase("stopped") ) {
+            return VmState.STOPPED;
+        }
+        else if( value.equalsIgnoreCase("paused") ) {
+            return VmState.PAUSED;
+        }
+        else if( value.equalsIgnoreCase("error") || value.equalsIgnoreCase("node_disconnected") || value.equalsIgnoreCase("unreachable") ) {
+            return VmState.RUNNING;
+        }
         logger.warn("DEBUG: Unknown Nimbula VM state: " + value);
         return VmState.PENDING;
     }
