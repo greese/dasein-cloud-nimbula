@@ -28,7 +28,10 @@ import java.util.Locale;
 import org.apache.log4j.Logger;
 import org.dasein.cloud.CloudException;
 import org.dasein.cloud.InternalException;
+import org.dasein.cloud.OperationNotSupportedException;
 import org.dasein.cloud.ProviderContext;
+import org.dasein.cloud.Requirement;
+import org.dasein.cloud.ResourceStatus;
 import org.dasein.cloud.identity.ServiceAction;
 import org.dasein.cloud.network.Direction;
 import org.dasein.cloud.network.Firewall;
@@ -36,12 +39,15 @@ import org.dasein.cloud.network.FirewallRule;
 import org.dasein.cloud.network.FirewallSupport;
 import org.dasein.cloud.network.Permission;
 import org.dasein.cloud.network.Protocol;
+import org.dasein.cloud.network.RuleTarget;
+import org.dasein.cloud.network.RuleTargetType;
 import org.dasein.cloud.nimbula.NimbulaDirector;
 import org.dasein.cloud.nimbula.NimbulaMethod;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import javax.annotation.Nonnegative;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
@@ -186,8 +192,35 @@ public class SecurityList implements FirewallSupport {
 
     @Override
     public @Nonnull String authorize(@Nonnull String firewallId, @Nonnull Direction direction, @Nonnull String cidr, @Nonnull Protocol protocol, int beginPort, int endPort) throws CloudException, InternalException {
+        return authorize(firewallId, direction, Permission.ALLOW, cidr, protocol, RuleTarget.getGlobal(firewallId), beginPort, endPort);
+    }
+
+    @Override
+    public @Nonnull String authorize(@Nonnull String firewallId, @Nonnull Direction direction, @Nonnull Permission permission, @Nonnull String source, @Nonnull Protocol protocol, int beginPort, int endPort) throws CloudException, InternalException {
+        return authorize(firewallId, direction, permission, source, protocol, RuleTarget.getGlobal(firewallId), beginPort, endPort);
+    }
+
+    @Override
+    public @Nonnull String authorize(@Nonnull String firewallId, @Nonnull Direction direction, @Nonnull Permission permission, @Nonnull String source, @Nonnull Protocol protocol, @Nonnull RuleTarget target, int beginPort, int endPort) throws CloudException, InternalException {
+        if( direction.equals(Direction.INGRESS) ) {
+            return authorize(firewallId, direction, permission, RuleTarget.getCIDR(source), protocol, target, beginPort, endPort, 0);
+        }
+        else {
+            return authorize(firewallId, direction, permission, target, protocol, RuleTarget.getCIDR(source), beginPort, endPort, 0);
+        }
+    }
+
+    @Override
+    public @Nonnull String authorize(@Nonnull String firewallId, @Nonnull Direction direction, @Nonnull Permission permission, @Nonnull RuleTarget sourceEndpoint, @Nonnull Protocol protocol, @Nonnull RuleTarget destinationEndpoint, int beginPort, int endPort, @Nonnegative int precedence) throws CloudException, InternalException {
+        if( !direction.equals(Direction.INGRESS) || !sourceEndpoint.getRuleTargetType().equals(RuleTargetType.CIDR) ) {
+            throw new OperationNotSupportedException("Not yet supported");
+        }
+        //noinspection ConstantConditions
+        if( !destinationEndpoint.getRuleTargetType().equals(RuleTargetType.GLOBAL) || !destinationEndpoint.getProviderFirewallId().equals(firewallId) ) {
+            throw new OperationNotSupportedException("Not yet supported");
+        }
         NimbulaMethod method = new NimbulaMethod(provider, SECURITY_RULES);
-        String ipListId = getIpListId(cidr, true);
+        String ipListId = getIpListId(sourceEndpoint.getCidr(), true);
         String appId = getApplicationId(protocol, beginPort, endPort, true);
 
         String ruleId = (provider.getNamePrefix() + "/dsn_" + protocol.name() + "_" + System.currentTimeMillis() + "_" + beginPort + "_" + endPort);
@@ -198,7 +231,12 @@ public class SecurityList implements FirewallSupport {
         state.put("src_list", "seciplist:" + ipListId);
         state.put("uri", null);
         state.put("application", appId);
-        state.put("action", "PERMIT");
+        if( permission.equals(Permission.ALLOW) ) {
+            state.put("action", "PERMIT");
+        }
+        else {
+            state.put("action", "DENY");
+        }
         state.put("name", ruleId);
 
         method.post(state);
@@ -345,6 +383,11 @@ public class SecurityList implements FirewallSupport {
     }
 
     @Override
+    public @Nonnull Requirement identifyPrecedenceRequirement(boolean inVlan) throws InternalException, CloudException {
+        return Requirement.NONE;
+    }
+
+    @Override
     public @Nonnull Collection<Firewall> list() throws InternalException, CloudException {
         NimbulaMethod method = new NimbulaMethod(provider, SECURITY_LIST);
         
@@ -372,8 +415,60 @@ public class SecurityList implements FirewallSupport {
     }
 
     @Override
+    public @Nonnull Iterable<ResourceStatus> listFirewallStatus() throws InternalException, CloudException {
+        ArrayList<ResourceStatus> status = new ArrayList<ResourceStatus>();
+
+        for( Firewall fw : list() ) {
+            //noinspection ConstantConditions
+            status.add(new ResourceStatus(fw.getProviderFirewallId(), true));
+        }
+        return status;
+    }
+
+    @Override
+    public @Nonnull Iterable<RuleTargetType> listSupportedDestinationTypes(boolean inVlan) throws InternalException, CloudException {
+        if( inVlan ) {
+            return Collections.emptyList();
+        }
+        return Collections.singletonList(RuleTargetType.GLOBAL);
+    }
+
+    @Override
+    public @Nonnull Iterable<Direction> listSupportedDirections(boolean inVlan) throws InternalException, CloudException {
+        if( inVlan ) {
+            return Collections.emptyList();
+        }
+        return Collections.singletonList(Direction.INGRESS);
+    }
+
+    @Override
+    public @Nonnull Iterable<Permission> listSupportedPermissions(boolean inVlan) throws InternalException, CloudException {
+        if( inVlan ) {
+            return Collections.emptyList();
+        }
+        ArrayList<Permission> permissions = new ArrayList<Permission>();
+
+        permissions.add(Permission.ALLOW);
+        permissions.add(Permission.DENY);
+        return permissions;
+    }
+
+    @Override
+    public @Nonnull Iterable<RuleTargetType> listSupportedSourceTypes(boolean inVlan) throws InternalException, CloudException {
+        if( inVlan ) {
+            return Collections.emptyList();
+        }
+        return Collections.singletonList(RuleTargetType.CIDR);
+    }
+
+    @Override
     public boolean isSubscribed() throws CloudException, InternalException {
         return provider.getComputeServices().getVirtualMachineSupport().isSubscribed();
+    }
+
+    @Override
+    public boolean isZeroPrecedenceHighest() throws InternalException, CloudException {
+        return true;
     }
 
     @Override
@@ -381,7 +476,8 @@ public class SecurityList implements FirewallSupport {
         return new String[0];
     }
 
-    private void revoke(String ruleId) throws CloudException, InternalException {
+    @Override
+    public void revoke(@Nonnull String ruleId) throws CloudException, InternalException {
         NimbulaMethod method = new NimbulaMethod(provider, SECURITY_RULES);
         
         method.delete(ruleId);
@@ -394,8 +490,18 @@ public class SecurityList implements FirewallSupport {
 
     @Override
     public void revoke(@Nonnull String firewallId, @Nonnull Direction direction, @Nonnull String cidr, @Nonnull Protocol protocol, int beginPort, int endPort) throws CloudException, InternalException {
+        revoke(firewallId, direction, Permission.ALLOW, cidr, protocol, RuleTarget.getGlobal(firewallId), beginPort, endPort);
+    }
+
+    @Override
+    public void revoke(@Nonnull String firewallId, @Nonnull Direction direction, @Nonnull Permission permission, @Nonnull String source, @Nonnull Protocol protocol, int beginPort, int endPort) throws CloudException, InternalException {
+        revoke(firewallId, direction, permission, source, protocol, RuleTarget.getGlobal(firewallId), beginPort, endPort);
+    }
+
+    @Override
+    public void revoke(@Nonnull String firewallId, @Nonnull Direction direction, @Nonnull Permission permission, @Nonnull String source, @Nonnull Protocol protocol, @Nonnull RuleTarget target, int beginPort, int endPort) throws CloudException, InternalException {
         NimbulaMethod method = new NimbulaMethod(provider, SECURITY_RULES);
-        String ipListId = getIpListId(cidr, false);
+        String ipListId = getIpListId(source, false);
         String appId = getApplicationId(protocol, beginPort, endPort, false);
 
         if( ipListId == null || appId == null ) {
@@ -412,6 +518,19 @@ public class SecurityList implements FirewallSupport {
 
                 if( ob != null ) {
                     if( ob.has("dst_is_ip") && ob.getBoolean("dst_is_ip") ) {
+                        continue;
+                    }
+                    if( ob.has("action") && !ob.isNull("action") ) {
+                        String action = ob.getString("action");
+
+                        if( permission.equals(Permission.ALLOW) && !action.equalsIgnoreCase("permit") ) {
+                            continue;
+                        }
+                        else if( permission.equals(Permission.DENY) && !action.equalsIgnoreCase("deny") ) {
+                            continue;
+                        }
+                    }
+                    else {
                         continue;
                     }
                     if( ob.has("dst_list") && ob.getString("dst_list").equals(id) ) {
@@ -438,8 +557,13 @@ public class SecurityList implements FirewallSupport {
     }
 
     @Override
-    public boolean supportsRules(@Nonnull Direction direction, boolean inVlan) throws CloudException, InternalException {
-        return (!inVlan && direction.equals(Direction.INGRESS));
+    public boolean supportsRules(@Nonnull Direction direction, @Nonnull Permission permission, boolean inVlan) throws CloudException, InternalException {
+        return (direction.equals(Direction.INGRESS) && !inVlan);
+    }
+
+    @Override
+    public boolean supportsFirewallSources() throws CloudException, InternalException {
+        return false;
     }
 
     private @Nullable Firewall toFirewall(@Nullable JSONObject ob) throws JSONException, CloudException {
@@ -488,35 +612,39 @@ public class SecurityList implements FirewallSupport {
     private Collection<FirewallRule> toRule(String firewallId, JSONObject ob) throws JSONException, CloudException, InternalException {
         String destList = (ob.has("dst_list") ? ob.getString("dst_list") : null);
         String appId = (ob.has("application") ? ob.getString("application") : null);
-        FirewallRule rule = new FirewallRule();
-        
+
         if( destList == null || appId == null ) {
             return null;
         }
         if( !ob.has("name") ) {
             return null;
         }
-        rule.setFirewallId(firewallId);
-        rule.setProviderRuleId(ob.getString("name"));
-        rule.setPermission(Permission.ALLOW);
+        String name = ob.getString("name");
+
+        Direction direction;
+
         if( ob.has("dst_is_ip") && ob.getBoolean("dst_is_ip") ) {
-            rule.setDirection(Direction.EGRESS);
+            direction = Direction.EGRESS;
         }
         else {
-            rule.setDirection(Direction.INGRESS);            
+            direction = Direction.INGRESS;
         }
+        Permission permission = Permission.ALLOW;
+
         if( ob.has("action") ) {
-            rule.setPermission(ob.getString("action").equalsIgnoreCase("permit") ? Permission.ALLOW : Permission.DENY);
+            permission = (ob.getString("action").equalsIgnoreCase("permit") ? Permission.ALLOW : Permission.DENY);
         }
         JSONObject app = getSecurityApplication(appId);
-        
+        int startPort, endPort;
+        Protocol protocol;
+
         if( app == null ) {
             return null;
         }
         else {
-            String protocol = app.getString("protocol");
+            String p = app.getString("protocol");
             
-            rule.setProtocol(Protocol.valueOf(protocol.toUpperCase()));
+            protocol = Protocol.valueOf(p.toUpperCase());
             if( app.has("dport") ) {
                 String dport = app.getString("dport");
             
@@ -524,19 +652,28 @@ public class SecurityList implements FirewallSupport {
                     int idx = dport.indexOf('-');
                     
                     if( idx < 1 ) {
-                        rule.setStartPort(Integer.parseInt(dport));
-                        rule.setEndPort(Integer.parseInt(dport));
+                        startPort = Integer.parseInt(dport);
+                        endPort = Integer.parseInt(dport);
                     }
                     else {
                         String s = dport.substring(0,idx);
                         String e = dport.substring(idx+1);
                         
-                        rule.setStartPort(Integer.parseInt(s));
-                        rule.setStartPort(Integer.parseInt(e));
+                        startPort = Integer.parseInt(s);
+                        endPort = Integer.parseInt(e);
                     }
                 }
+                else {
+                    startPort = -1;
+                    endPort = -1;
+                }
+            }
+            else {
+                startPort = -1;
+                endPort = -1;
             }
         }
+        FirewallRule rule = FirewallRule.getInstance(null, firewallId, RuleTarget.getCIDR("192.268.1.1/32"), direction, protocol, permission, RuleTarget.getGlobal(firewallId), startPort, endPort);
         ArrayList<FirewallRule> rules = new ArrayList<FirewallRule>();
         
         if( ob.has("src_is_ip") && ob.getBoolean("src_is_ip") ) {
@@ -559,17 +696,7 @@ public class SecurityList implements FirewallSupport {
                 String entry = entries.getString(i);
                 
                 if( entry != null ) {
-                    FirewallRule copy = new FirewallRule();
-                    
-                    copy.setCidr(entry);
-                    copy.setDirection(rule.getDirection());
-                    copy.setEndPort(rule.getEndPort());
-                    copy.setFirewallId(rule.getFirewallId());
-                    copy.setPermission(rule.getPermission());
-                    copy.setProtocol(rule.getProtocol());
-                    copy.setProviderRuleId(rule.getProviderRuleId() + ":" + copy.getCidr());
-                    copy.setStartPort(rule.getStartPort());
-                    rules.add(copy);
+                    rules.add(FirewallRule.getInstance(rule.getProviderRuleId() + ":" + entry, rule.getFirewallId(), RuleTarget.getCIDR(entry), rule.getDirection(), rule.getProtocol(), rule.getPermission(), RuleTarget.getGlobal(firewallId), rule.getStartPort(), rule.getEndPort()));
                 }
             }
         }

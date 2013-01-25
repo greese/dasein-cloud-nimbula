@@ -31,16 +31,21 @@ import org.dasein.cloud.InternalException;
 import org.dasein.cloud.OperationNotSupportedException;
 import org.dasein.cloud.ProviderContext;
 import org.dasein.cloud.Requirement;
+import org.dasein.cloud.ResourceStatus;
 import org.dasein.cloud.Tag;
 import org.dasein.cloud.compute.Architecture;
+import org.dasein.cloud.compute.ImageClass;
 import org.dasein.cloud.compute.Platform;
 import org.dasein.cloud.compute.VMLaunchOptions;
+import org.dasein.cloud.compute.VMScalingCapabilities;
+import org.dasein.cloud.compute.VMScalingOptions;
 import org.dasein.cloud.compute.VirtualMachine;
 import org.dasein.cloud.compute.VirtualMachineProduct;
 import org.dasein.cloud.compute.VirtualMachineSupport;
 import org.dasein.cloud.compute.VmState;
 import org.dasein.cloud.compute.VmStatistics;
 import org.dasein.cloud.identity.ServiceAction;
+import org.dasein.cloud.network.RawAddress;
 import org.dasein.cloud.nimbula.NimbulaDirector;
 import org.dasein.cloud.nimbula.NimbulaMethod;
 import org.dasein.util.CalendarWrapper;
@@ -64,15 +69,20 @@ public class Instance implements VirtualMachineSupport {
     private NimbulaDirector cloud;
     
     Instance(@Nonnull NimbulaDirector cloud) { this.cloud = cloud; }
-    
+
     @Override
-    public void unpause(@Nonnull String vmId) throws InternalException, CloudException {
-        throw new OperationNotSupportedException("Pause/unpause is not supported");
+    public VirtualMachine alterVirtualMachine(@Nonnull String vmId, @Nonnull VMScalingOptions options) throws InternalException, CloudException {
+        throw new OperationNotSupportedException("Not yet supported");
     }
 
     @Override
     public @Nonnull VirtualMachine clone(@Nonnull String vmId, @Nonnull String intoDcId, @Nonnull String name, @Nonnull String description, boolean powerOn, @Nullable String ... firewallIds) throws InternalException, CloudException {
         throw new OperationNotSupportedException("Cloning is not currently supported.");
+    }
+
+    @Override
+    public @Nullable VMScalingCapabilities describeVerticalScalingCapabilities() throws CloudException, InternalException {
+        return null;
     }
 
     @Override
@@ -88,6 +98,11 @@ public class Instance implements VirtualMachineSupport {
     @Override
     public @Nonnull String getConsoleOutput(@Nonnull String vmId) throws InternalException, CloudException {
         return "";
+    }
+
+    @Override
+    public int getCostFactor(@Nonnull VmState state) throws InternalException, CloudException {
+        return 100;
     }
 
     @Override
@@ -131,7 +146,17 @@ public class Instance implements VirtualMachineSupport {
     }
 
     @Override
+    public @Nonnull Requirement identifyImageRequirement(@Nonnull ImageClass cls) throws CloudException, InternalException {
+        return (cls.equals(ImageClass.MACHINE) ? Requirement.REQUIRED : Requirement.NONE);
+    }
+
+    @Override
     public @Nonnull Requirement identifyPasswordRequirement() throws CloudException, InternalException {
+        return Requirement.NONE;
+    }
+
+    @Override
+    public @Nonnull Requirement identifyPasswordRequirement(Platform platform) throws CloudException, InternalException {
         return Requirement.NONE;
     }
 
@@ -142,6 +167,16 @@ public class Instance implements VirtualMachineSupport {
 
     @Override
     public @Nonnull Requirement identifyShellKeyRequirement() throws CloudException, InternalException {
+        return Requirement.NONE;
+    }
+
+    @Override
+    public @Nonnull Requirement identifyShellKeyRequirement(Platform platform) throws CloudException, InternalException {
+        return Requirement.NONE;
+    }
+
+    @Override
+    public @Nonnull Requirement identifyStaticIPRequirement() throws CloudException, InternalException {
         return Requirement.NONE;
     }
 
@@ -424,6 +459,16 @@ public class Instance implements VirtualMachineSupport {
     }
 
     @Override
+    public @Nonnull Iterable<ResourceStatus> listVirtualMachineStatus() throws InternalException, CloudException {
+        ArrayList<ResourceStatus> status = new ArrayList<ResourceStatus>();
+
+        for( VirtualMachine vm : listVirtualMachines() ) {
+            status.add(new ResourceStatus(vm.getProviderVirtualMachineId(), vm.getCurrentState()));
+        }
+        return status;
+    }
+
+    @Override
     public @Nonnull Iterable<VirtualMachine> listVirtualMachines() throws InternalException, CloudException {
         NimbulaMethod method = new NimbulaMethod(cloud, INSTANCE);
         
@@ -473,6 +518,11 @@ public class Instance implements VirtualMachineSupport {
 
     @Override
     public void stop(@Nonnull String vmId) throws InternalException, CloudException {
+        stop(vmId, false);
+    }
+
+    @Override
+    public void stop(@Nonnull String vmId, boolean force) throws InternalException, CloudException {
         throw new OperationNotSupportedException("Start/stop not supported");
     }
 
@@ -499,6 +549,16 @@ public class Instance implements VirtualMachineSupport {
     @Override
     public void suspend(@Nonnull String vmId) throws CloudException, InternalException {
         throw new OperationNotSupportedException("Suspend/resume not supported");
+    }
+
+    @Override
+    public void unpause(@Nonnull String vmId) throws InternalException, CloudException {
+        throw new OperationNotSupportedException("Pause/unpause is not supported");
+    }
+
+    @Override
+    public void updateTags(@Nonnull String vmId, @Nonnull Tag... tags) throws CloudException, InternalException {
+        // NO-OP
     }
 
     @Override
@@ -608,7 +668,7 @@ public class Instance implements VirtualMachineSupport {
             String ip = ob.getString("ip");
             
             if( ip != null ) {
-                vm.setPrivateIpAddresses(new String[] { ip });                
+                vm.setPrivateAddresses(new RawAddress(ip));
             }
         }
         catch( JSONException ignore ) {
@@ -639,7 +699,6 @@ public class Instance implements VirtualMachineSupport {
         vm.setProviderOwnerId(idInfo[0]);
         vm.setProviderVirtualMachineId(ob.getString("name"));
         vm.setPublicDnsAddress(null);
-        vm.setPublicIpAddresses(new String[0]);
         vm.setRootPassword(null);
         vm.setRootUser(null);
         vm.setTerminationTimestamp(-1L);

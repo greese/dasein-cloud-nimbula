@@ -23,10 +23,12 @@ import org.dasein.cloud.CloudException;
 import org.dasein.cloud.InternalException;
 import org.dasein.cloud.ProviderContext;
 import org.dasein.cloud.Requirement;
+import org.dasein.cloud.ResourceStatus;
 import org.dasein.cloud.compute.Platform;
 import org.dasein.cloud.compute.VirtualMachine;
 import org.dasein.cloud.compute.Volume;
 import org.dasein.cloud.compute.VolumeCreateOptions;
+import org.dasein.cloud.compute.VolumeFormat;
 import org.dasein.cloud.compute.VolumeProduct;
 import org.dasein.cloud.compute.VolumeState;
 import org.dasein.cloud.compute.VolumeSupport;
@@ -44,6 +46,7 @@ import javax.annotation.Nonnegative;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.UUID;
@@ -159,6 +162,11 @@ public class Storage implements VolumeSupport {
 
     @Override
     public void detach(@Nonnull String volumeId) throws InternalException, CloudException {
+        detach(volumeId, false);
+    }
+
+    @Override
+    public void detach(@Nonnull String volumeId, boolean force) throws InternalException, CloudException {
         Attachment attachment = getAttachment(getAttachmentList(), volumeId);
 
         if( attachment == null ) {
@@ -289,6 +297,11 @@ public class Storage implements VolumeSupport {
     }
 
     @Override
+    public @Nonnull Iterable<VolumeFormat> listSupportedFormats() throws InternalException, CloudException {
+        return Collections.singletonList(VolumeFormat.BLOCK);
+    }
+
+    @Override
     public @Nonnull Iterable<VolumeProduct> listVolumeProducts() throws InternalException, CloudException {
         NimbulaMethod method = new NimbulaMethod(provider, STORAGE_PROPERTY);
 
@@ -313,6 +326,16 @@ public class Storage implements VolumeSupport {
             }
             throw new InternalException(e);
         }
+    }
+
+    @Override
+    public @Nonnull Iterable<ResourceStatus> listVolumeStatus() throws InternalException, CloudException {
+        ArrayList<ResourceStatus> status = new ArrayList<ResourceStatus>();
+
+        for( Volume v : listVolumes() ) {
+            status.add(new ResourceStatus(v.getProviderVolumeId(), v.getCurrentState()));
+        }
+        return status;
     }
 
     @Override
