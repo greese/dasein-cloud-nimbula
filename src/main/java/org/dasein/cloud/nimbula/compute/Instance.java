@@ -562,6 +562,21 @@ public class Instance implements VirtualMachineSupport {
     }
 
     @Override
+    public void updateTags(@Nonnull String[] vmIds, @Nonnull Tag... tags) throws CloudException, InternalException {
+        // NO-OP
+    }
+
+    @Override
+    public void removeTags(@Nonnull String vmId, @Nonnull Tag... tags) throws CloudException, InternalException {
+        // NO-OP
+    }
+
+    @Override
+    public void removeTags(@Nonnull String[] vmIds, @Nonnull Tag... tags) throws CloudException, InternalException {
+        // NO-OP
+    }
+
+    @Override
     public void terminate(@Nonnull String vmId) throws InternalException, CloudException {
         long timeout = System.currentTimeMillis() + (CalendarWrapper.MINUTE * 20L);
         NimbulaMethod method = new NimbulaMethod(cloud, INSTANCE);
