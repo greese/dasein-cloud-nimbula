@@ -31,9 +31,11 @@ import org.dasein.cloud.ProviderContext;
 import org.dasein.cloud.Requirement;
 import org.dasein.cloud.ResourceStatus;
 import org.dasein.cloud.Tag;
+import org.dasein.cloud.compute.AbstractImageSupport;
 import org.dasein.cloud.compute.Architecture;
 import org.dasein.cloud.compute.ImageClass;
 import org.dasein.cloud.compute.ImageCreateOptions;
+import org.dasein.cloud.compute.ImageFilterOptions;
 import org.dasein.cloud.compute.MachineImage;
 import org.dasein.cloud.compute.MachineImageFormat;
 import org.dasein.cloud.compute.MachineImageState;
@@ -54,7 +56,7 @@ import javax.annotation.Nonnegative;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
-public class Image implements MachineImageSupport {
+public class Image extends AbstractImageSupport {
     static private final Logger logger = NimbulaDirector.getLogger(Image.class);
     
     static public final String IMAGELIST    = "imagelist";
@@ -62,36 +64,9 @@ public class Image implements MachineImageSupport {
     
     private NimbulaDirector cloud;
     
-    Image(@Nonnull NimbulaDirector cloud) { this.cloud = cloud; }
-
-    @Override
-    public void addImageShare(@Nonnull String providerImageId, @Nonnull String accountNumber) throws CloudException, InternalException {
-        throw new OperationNotSupportedException("Sharing not supported");
-    }
-
-    @Override
-    public void addPublicShare(@Nonnull String providerImageId) throws CloudException, InternalException {
-        throw new OperationNotSupportedException("Sharing not supported");
-    }
-
-    @Override
-    public @Nonnull String bundleVirtualMachine(@Nonnull String virtualMachineId, @Nonnull MachineImageFormat format, @Nonnull String bucket, @Nonnull String name) throws CloudException, InternalException {
-        throw new OperationNotSupportedException("Bundling not supported");
-    }
-
-    @Override
-    public void bundleVirtualMachineAsync(@Nonnull String virtualMachineId, @Nonnull MachineImageFormat format, @Nonnull String bucket, @Nonnull String name, @Nonnull AsynchronousTask<String> trackingTask) throws CloudException, InternalException {
-        throw new OperationNotSupportedException("Bundling not supported");
-    }
-
-    @Override
-    public @Nonnull MachineImage captureImage(@Nonnull ImageCreateOptions options) throws CloudException, InternalException {
-        throw new OperationNotSupportedException("Image capture not supported");
-    }
-
-    @Override
-    public void captureImageAsync(@Nonnull ImageCreateOptions options, @Nonnull AsynchronousTask<MachineImage> taskTracker) throws CloudException, InternalException {
-        throw new OperationNotSupportedException("Image capture not supported");
+    Image(@Nonnull NimbulaDirector cloud) {
+        super(cloud);
+        this.cloud = cloud;
     }
 
     @Override
@@ -112,12 +87,6 @@ public class Image implements MachineImageSupport {
             }
             throw new InternalException(e);
         }
-    }
-
-    @Override
-    @Deprecated
-    public @Nullable MachineImage getMachineImage(@Nonnull String machineImageId) throws CloudException, InternalException {
-        return getImage(machineImageId);
     }
 
     public @Nullable String getMachineImageId(@Nonnull String imagelist, @Nonnegative int entryNumber) throws CloudException, InternalException {
@@ -146,20 +115,10 @@ public class Image implements MachineImageSupport {
             throw new InternalException(e);
         }        
     }
-    
-    @Override
-    public @Nonnull String getProviderTermForImage(@Nonnull Locale locale) {
-        return getProviderTermForImage(locale, ImageClass.MACHINE);
-    }
 
     @Override
     public @Nonnull String getProviderTermForImage(@Nonnull Locale locale, @Nonnull ImageClass cls) {
         return "image";
-    }
-
-    @Override
-    public @Nonnull String getProviderTermForCustomImage(@Nonnull Locale locale, @Nonnull ImageClass cls) {
-        return getProviderTermForImage(locale, cls);
     }
 
     @Override
@@ -173,11 +132,6 @@ public class Image implements MachineImageSupport {
     }
 
     @Override
-    public @Nonnull AsynchronousTask<String> imageVirtualMachine(@Nonnull String vmId, @Nonnull String name, @Nonnull String description) throws CloudException, InternalException {
-        throw new OperationNotSupportedException("Imaging not yet supported");
-    }
-
-    @Override
     public boolean isImageSharedWithPublic(@Nonnull String machineImageId) throws CloudException, InternalException {
         return machineImageId.startsWith("/nimbula/public");
     }
@@ -188,79 +142,75 @@ public class Image implements MachineImageSupport {
     }
 
     @Override
-    public @Nonnull Iterable<ResourceStatus> listImageStatus(@Nonnull ImageClass cls) throws CloudException, InternalException {
-        ArrayList<ResourceStatus> status = new ArrayList<ResourceStatus>();
+    public @Nonnull Iterable<MachineImage> listImages(@Nullable ImageFilterOptions options) throws CloudException, InternalException {
+        ImageClass cls = (options == null ? null : options.getImageClass());
 
-        for( MachineImage img : listImages(cls) ) {
-            status.add(new ResourceStatus(img.getProviderMachineImageId(), img.getCurrentState()));
-        }
-        return status;
-    }
-
-    @Override
-    public @Nonnull Iterable<MachineImage> listImages(@Nonnull ImageClass cls) throws CloudException, InternalException {
-        NimbulaMethod method = new NimbulaMethod(cloud, MACHINEIMAGE);
-
-        method.list();
-        try {
-            ArrayList<MachineImage> images = new ArrayList<MachineImage>();
-            JSONArray array = method.getResponseBody().getJSONArray("result");
-
-            for( int i=0; i<array.length(); i++ ) {
-                MachineImage image = toMachineImage(array.getJSONObject(i));
-
-                if( image != null ) {
-                    images.add(image);
-                }
-            }
-            return images;
-        }
-        catch( JSONException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error parsing JSON: " + e.getMessage());
-                e.printStackTrace();
-            }
-            throw new InternalException(e);
-        }
-    }
-
-    @Override
-    public @Nonnull Iterable<MachineImage> listImages(@Nonnull ImageClass cls, @Nonnull String ownedBy) throws CloudException, InternalException {
-        if( !ownedBy.endsWith("/") ){
-            ownedBy = ownedBy + "/";
-        }
-        NimbulaMethod method = new NimbulaMethod(cloud, MACHINEIMAGE);
-        int code = method.get(ownedBy);
-
-        if( code == 401 ) {
+        if( cls != null && !cls.equals(ImageClass.MACHINE) ) {
             return Collections.emptyList();
         }
-        try {
-            ArrayList<MachineImage> images = new ArrayList<MachineImage>();
-            JSONArray array = method.getResponseBody().getJSONArray("result");
+        ProviderContext ctx = getProvider().getContext();
 
-            for( int i=0; i<array.length(); i++ ) {
-                MachineImage image = toMachineImage(array.getJSONObject(i));
+        if( ctx == null ) {
+            throw new CloudException("No context was set for this request");
+        }
+        String ownedBy = (options == null ? null : options.getAccountNumber());
 
-                if( image != null ) {
-                    images.add(image);
+        if( ownedBy == null || ownedBy.equals(ctx.getAccountNumber()) ) {
+            NimbulaMethod method = new NimbulaMethod(cloud, MACHINEIMAGE);
+
+            method.list();
+            try {
+                ArrayList<MachineImage> images = new ArrayList<MachineImage>();
+                JSONArray array = method.getResponseBody().getJSONArray("result");
+
+                for( int i=0; i<array.length(); i++ ) {
+                    MachineImage image = toMachineImage(array.getJSONObject(i));
+
+                    if( image != null ) {
+                        images.add(image);
+                    }
                 }
+                return images;
             }
-            return images;
-        }
-        catch( JSONException e ) {
-            if( logger.isDebugEnabled() ) {
-                logger.error("Error parsing JSON: " + e.getMessage());
-                e.printStackTrace();
+            catch( JSONException e ) {
+                if( logger.isDebugEnabled() ) {
+                    logger.error("Error parsing JSON: " + e.getMessage());
+                    e.printStackTrace();
+                }
+                throw new InternalException(e);
             }
-            throw new InternalException(e);
         }
-    }
+        else {
+            if( !ownedBy.endsWith("/") ){
+                ownedBy = ownedBy + "/";
+            }
+            NimbulaMethod method = new NimbulaMethod(cloud, MACHINEIMAGE);
+            int code = method.get(ownedBy);
 
-    @Override
-    @Deprecated
-    public @Nonnull Iterable<MachineImage> listMachineImages() throws CloudException, InternalException {
-        return listImages(ImageClass.MACHINE);
+            if( code == 401 ) {
+                return Collections.emptyList();
+            }
+            try {
+                ArrayList<MachineImage> images = new ArrayList<MachineImage>();
+                JSONArray array = method.getResponseBody().getJSONArray("result");
+
+                for( int i=0; i<array.length(); i++ ) {
+                    MachineImage image = toMachineImage(array.getJSONObject(i));
+
+                    if( image != null ) {
+                        images.add(image);
+                    }
+                }
+                return images;
+            }
+            catch( JSONException e ) {
+                if( logger.isDebugEnabled() ) {
+                    logger.error("Error parsing JSON: " + e.getMessage());
+                    e.printStackTrace();
+                }
+                throw new InternalException(e);
+            }
+        }
     }
 
     @Override
@@ -273,11 +223,6 @@ public class Image implements MachineImageSupport {
     }
 
     @Override
-    public @Nonnull Iterable<String> listShares(@Nonnull String forMachineImageId) throws CloudException, InternalException {
-        return Collections.emptyList();
-    }
-
-    @Override
     public @Nonnull Iterable<ImageClass> listSupportedImageClasses() throws CloudException, InternalException {
         return Collections.singletonList(ImageClass.MACHINE);
     }
@@ -285,11 +230,6 @@ public class Image implements MachineImageSupport {
     @Override
     public @Nonnull Iterable<MachineImageType> listSupportedImageTypes() throws CloudException, InternalException {
         return Collections.singletonList(MachineImageType.VOLUME);
-    }
-
-    @Override
-    public @Nonnull MachineImage registerImageBundle(@Nonnull ImageCreateOptions options) throws CloudException, InternalException {
-        throw new OperationNotSupportedException("Bundles not supported");
     }
 
     @Override
@@ -305,47 +245,6 @@ public class Image implements MachineImageSupport {
     @Override
     public @Nonnull String[] mapServiceAction(@Nonnull ServiceAction action) {
         return new String[0];
-    }
-
-    private boolean matches(MachineImage image, String keyword, Platform platform, Architecture architecture) {
-        if( architecture != null && !architecture.equals(image.getArchitecture()) ) {
-            return false;
-        }
-        if( platform != null && !platform.equals(Platform.UNKNOWN) ) {
-            Platform mine = image.getPlatform();
-            
-            if( platform.isWindows() && !mine.isWindows() ) {
-                return false;
-            }
-            if( platform.isUnix() && !mine.isUnix() ) {
-                return false;
-            }
-            if( platform.isBsd() && !mine.isBsd() ) {
-                return false;
-            }
-            if( platform.isLinux() && !mine.isLinux() ) {
-                return false;
-            }
-            if( platform.equals(Platform.UNIX) ) {
-                if( !mine.isUnix() ) {
-                    return false;
-                }
-            }
-            else if( !platform.equals(mine) ) {
-                return false;
-            }
-        }
-        if( keyword != null ) {
-            keyword = keyword.toLowerCase();
-            if( !image.getDescription().toLowerCase().contains(keyword) ) {
-                if( !image.getName().toLowerCase().contains(keyword) ) {
-                    if( !image.getProviderMachineImageId().toLowerCase().contains(keyword) ) {
-                        return false;
-                    }
-                }
-            }
-        }
-        return true;
     }
 
     @Override
@@ -381,36 +280,6 @@ public class Image implements MachineImageSupport {
     }
 
     @Override
-    public @Nonnull Iterable<MachineImage> searchImages(final @Nullable String accountNumber, final @Nullable String keyword, final @Nullable Platform platform, final @Nullable Architecture architecture, final @Nullable ImageClass... imageClasses) throws CloudException, InternalException {
-        PopulatorThread<MachineImage> populator;
-
-        cloud.hold();
-        populator = new PopulatorThread<MachineImage>(new JiteratorPopulator<MachineImage>() {
-            @Override
-            public void populate(@Nonnull Jiterator<MachineImage> iterator) throws Exception {
-                ImageClass[] classes = ((imageClasses == null || imageClasses.length < 1) ? ImageClass.values() : imageClasses);
-
-                for( ImageClass cls : classes ) {
-                    try {
-                        Iterable<MachineImage> images = (accountNumber == null ? listImages(cls) : listImages(cls, accountNumber));
-
-                        for( MachineImage image : images ) {
-                            if( matches(image, keyword, platform, architecture) ) {
-                                iterator.push(image);
-                            }
-                        }
-                    }
-                    finally {
-                        cloud.release();
-                    }
-                }
-            }
-        });
-        populator.populate();
-        return populator.getResult();
-    }
-
-    @Override
     public @Nonnull Iterable<MachineImage> searchPublicImages(final @Nullable String keyword, final @Nullable Platform platform, final @Nullable Architecture architecture, final @Nullable ImageClass... imageClasses) throws CloudException, InternalException {
         PopulatorThread<MachineImage> populator;
 
@@ -418,34 +287,20 @@ public class Image implements MachineImageSupport {
         populator = new PopulatorThread<MachineImage>(new JiteratorPopulator<MachineImage>() {
             @Override
             public void populate(@Nonnull Jiterator<MachineImage> iterator) throws Exception {
-                ImageClass[] classes = ((imageClasses == null || imageClasses.length < 1) ? ImageClass.values() : imageClasses);
-
-                for( ImageClass cls : classes ) {
-                    try {
-                        for( MachineImage image : listImages(cls) ) {
-                            if( matches(image, keyword, platform, architecture) ) {
-                                iterator.push(image);
-                            }
-                        }
-                        for( MachineImage image : listImages(ImageClass.MACHINE, "/nimbula/public/") ) {
-                            if( matches(image, keyword, platform, architecture) ) {
-                                iterator.push(image);
-                            }
+                try {
+                    for( MachineImage image : listImages(ImageFilterOptions.getInstance().withAccountNumber("/nimbula/public/")) ) {
+                        if( matches(image, keyword, platform, architecture, imageClasses) ) {
+                            iterator.push(image);
                         }
                     }
-                    finally {
-                        cloud.release();
-                    }
+                }
+                finally {
+                    cloud.release();
                 }
             }
         });
         populator.populate();
         return populator.getResult();
-    }
-
-    @Override
-    public void shareMachineImage(@Nonnull String machineImageId, @Nullable String withAccountId, boolean allow) throws CloudException, InternalException {
-        throw new OperationNotSupportedException("Nimbula does not support image sharing of any kind.");
     }
 
     @Override
@@ -476,26 +331,6 @@ public class Image implements MachineImageSupport {
     @Override
     public boolean supportsPublicLibrary(@Nonnull ImageClass cls) throws CloudException, InternalException {
         return cls.equals(ImageClass.MACHINE);
-    }
-
-    @Override
-    public void updateTags(@Nonnull String vmId, @Nonnull Tag... tags) throws CloudException, InternalException {
-        // NO-OP
-    }
-
-    @Override
-    public void updateTags(@Nonnull String[] vmIds, @Nonnull Tag... tags) throws CloudException, InternalException {
-        // NO-OP
-    }
-
-    @Override
-    public void removeTags(@Nonnull String vmId, @Nonnull Tag... tags) throws CloudException, InternalException {
-        // NO-OP
-    }
-
-    @Override
-    public void removeTags(@Nonnull String[] vmIds, @Nonnull Tag... tags) throws CloudException, InternalException {
-        // NO-OP
     }
 
     private @Nullable MachineImage toMachineImage(@Nonnull JSONObject ob) throws JSONException, CloudException {

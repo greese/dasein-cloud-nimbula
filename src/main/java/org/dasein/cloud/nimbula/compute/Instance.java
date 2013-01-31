@@ -28,22 +28,16 @@ import java.util.Map;
 import org.apache.log4j.Logger;
 import org.dasein.cloud.CloudException;
 import org.dasein.cloud.InternalException;
-import org.dasein.cloud.OperationNotSupportedException;
 import org.dasein.cloud.ProviderContext;
 import org.dasein.cloud.Requirement;
-import org.dasein.cloud.ResourceStatus;
-import org.dasein.cloud.Tag;
+import org.dasein.cloud.compute.AbstractVMSupport;
 import org.dasein.cloud.compute.Architecture;
 import org.dasein.cloud.compute.ImageClass;
 import org.dasein.cloud.compute.Platform;
 import org.dasein.cloud.compute.VMLaunchOptions;
-import org.dasein.cloud.compute.VMScalingCapabilities;
-import org.dasein.cloud.compute.VMScalingOptions;
 import org.dasein.cloud.compute.VirtualMachine;
 import org.dasein.cloud.compute.VirtualMachineProduct;
-import org.dasein.cloud.compute.VirtualMachineSupport;
 import org.dasein.cloud.compute.VmState;
-import org.dasein.cloud.compute.VmStatistics;
 import org.dasein.cloud.identity.ServiceAction;
 import org.dasein.cloud.network.RawAddress;
 import org.dasein.cloud.nimbula.NimbulaDirector;
@@ -59,7 +53,7 @@ import org.json.JSONObject;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
-public class Instance implements VirtualMachineSupport {
+public class Instance extends AbstractVMSupport {
     static private final Logger logger = NimbulaDirector.getLogger(Instance.class);
     
     static public final String INSTANCE   = "instance";
@@ -68,36 +62,9 @@ public class Instance implements VirtualMachineSupport {
     
     private NimbulaDirector cloud;
     
-    Instance(@Nonnull NimbulaDirector cloud) { this.cloud = cloud; }
-
-    @Override
-    public VirtualMachine alterVirtualMachine(@Nonnull String vmId, @Nonnull VMScalingOptions options) throws InternalException, CloudException {
-        throw new OperationNotSupportedException("Not yet supported");
-    }
-
-    @Override
-    public @Nonnull VirtualMachine clone(@Nonnull String vmId, @Nonnull String intoDcId, @Nonnull String name, @Nonnull String description, boolean powerOn, @Nullable String ... firewallIds) throws InternalException, CloudException {
-        throw new OperationNotSupportedException("Cloning is not currently supported.");
-    }
-
-    @Override
-    public @Nullable VMScalingCapabilities describeVerticalScalingCapabilities() throws CloudException, InternalException {
-        return null;
-    }
-
-    @Override
-    public void disableAnalytics(String vmId) throws InternalException, CloudException {
-        // NO-OP
-    }
-
-    @Override
-    public void enableAnalytics(String vmId) throws InternalException, CloudException {
-        // NO-OP
-    }
-
-    @Override
-    public @Nonnull String getConsoleOutput(@Nonnull String vmId) throws InternalException, CloudException {
-        return "";
+    Instance(@Nonnull NimbulaDirector cloud) {
+        super(cloud);
+        this.cloud = cloud;
     }
 
     @Override
@@ -136,23 +103,8 @@ public class Instance implements VirtualMachineSupport {
     }
 
     @Override
-    public @Nonnull VmStatistics getVMStatistics(@Nonnull String vmId, long from, long to) throws InternalException, CloudException {
-        return new VmStatistics();
-    }
-
-    @Override
-    public @Nonnull Iterable<VmStatistics> getVMStatisticsForPeriod(@Nonnull String vmId, long from, long to) throws InternalException, CloudException {
-        return Collections.emptyList();
-    }
-
-    @Override
     public @Nonnull Requirement identifyImageRequirement(@Nonnull ImageClass cls) throws CloudException, InternalException {
         return (cls.equals(ImageClass.MACHINE) ? Requirement.REQUIRED : Requirement.NONE);
-    }
-
-    @Override
-    public @Nonnull Requirement identifyPasswordRequirement() throws CloudException, InternalException {
-        return Requirement.NONE;
     }
 
     @Override
@@ -162,11 +114,6 @@ public class Instance implements VirtualMachineSupport {
 
     @Override
     public @Nonnull Requirement identifyRootVolumeRequirement() throws CloudException, InternalException {
-        return Requirement.NONE;
-    }
-
-    @Override
-    public @Nonnull Requirement identifyShellKeyRequirement() throws CloudException, InternalException {
         return Requirement.NONE;
     }
 
@@ -320,35 +267,6 @@ public class Instance implements VirtualMachineSupport {
             throw new InternalException(e);
         }
     }
-    
-    @Override
-    public @Nonnull VirtualMachine launch(@Nonnull String fromMachineImageId, @Nonnull VirtualMachineProduct product, @Nonnull String dataCenterId, @Nonnull String name, @Nonnull String description, @Nullable String withKeypairId, @Nullable String inVlanId, boolean withAnalytics, boolean asSandbox, @Nullable String ... firewalls) throws InternalException, CloudException {
-        return launch(fromMachineImageId, product, dataCenterId, name, description, withKeypairId, inVlanId, withAnalytics, asSandbox, firewalls, new Tag[0]);
-    }
-    
-    @Override
-    public @Nonnull VirtualMachine launch(@Nonnull String fromMachineImageId, @Nonnull VirtualMachineProduct product, @Nonnull String dataCenterId, @Nonnull String name, @Nonnull String description, @Nullable String withKeypairId, String inVlanId, boolean withAnalytics, boolean asSandbox, @Nullable String[] firewalls, @Nullable Tag ... tags) throws InternalException, CloudException {
-        VMLaunchOptions options;
-
-        if( inVlanId == null ) {
-            options = VMLaunchOptions.getInstance(product.getProviderProductId(), fromMachineImageId, name, description).inDataCenter(dataCenterId);
-        }
-        else {
-            options = VMLaunchOptions.getInstance(product.getProviderProductId(), fromMachineImageId, name, description).inVlan(null, dataCenterId, inVlanId);
-        }
-        if( withKeypairId != null ) {
-            options = options.withBoostrapKey(withKeypairId);
-        }
-        if( tags != null ) {
-            for( Tag t : tags ) {
-                options = options.withMetaData(t.getKey(), t.getValue());
-            }
-        }
-        if( firewalls != null ) {
-            options = options.behindFirewalls(firewalls);
-        }
-        return launch(options);
-    }
 
     @Override
     public @Nonnull VirtualMachine launch(@Nonnull VMLaunchOptions options) throws CloudException, InternalException {
@@ -459,16 +377,6 @@ public class Instance implements VirtualMachineSupport {
     }
 
     @Override
-    public @Nonnull Iterable<ResourceStatus> listVirtualMachineStatus() throws InternalException, CloudException {
-        ArrayList<ResourceStatus> status = new ArrayList<ResourceStatus>();
-
-        for( VirtualMachine vm : listVirtualMachines() ) {
-            status.add(new ResourceStatus(vm.getProviderVirtualMachineId(), vm.getCurrentState()));
-        }
-        return status;
-    }
-
-    @Override
     public @Nonnull Iterable<VirtualMachine> listVirtualMachines() throws InternalException, CloudException {
         NimbulaMethod method = new NimbulaMethod(cloud, INSTANCE);
         
@@ -497,41 +405,6 @@ public class Instance implements VirtualMachineSupport {
     }
 
     @Override
-    public void pause(@Nonnull String vmId) throws InternalException, CloudException {
-        throw new OperationNotSupportedException("Pause/unpause not supported");
-    }
-
-    @Override
-    public void reboot(@Nonnull String vmId) throws CloudException, InternalException {
-        throw new OperationNotSupportedException("Reboots not supported");
-    }
-
-    @Override
-    public void resume(@Nonnull String vmId) throws CloudException, InternalException {
-        throw new OperationNotSupportedException("Suspend/resume not supported");
-    }
-
-    @Override
-    public void start(@Nonnull String vmId) throws InternalException, CloudException {
-        throw new OperationNotSupportedException("Start/stop not supported");
-    }
-
-    @Override
-    public void stop(@Nonnull String vmId) throws InternalException, CloudException {
-        stop(vmId, false);
-    }
-
-    @Override
-    public void stop(@Nonnull String vmId, boolean force) throws InternalException, CloudException {
-        throw new OperationNotSupportedException("Start/stop not supported");
-    }
-
-    @Override 
-    public boolean supportsAnalytics() {
-        return false;
-    }
-
-    @Override
     public boolean supportsPauseUnpause(@Nonnull VirtualMachine vm) {
         return false;
     }
@@ -544,36 +417,6 @@ public class Instance implements VirtualMachineSupport {
     @Override
     public boolean supportsSuspendResume(@Nonnull VirtualMachine vm) {
         return false;
-    }
-
-    @Override
-    public void suspend(@Nonnull String vmId) throws CloudException, InternalException {
-        throw new OperationNotSupportedException("Suspend/resume not supported");
-    }
-
-    @Override
-    public void unpause(@Nonnull String vmId) throws InternalException, CloudException {
-        throw new OperationNotSupportedException("Pause/unpause is not supported");
-    }
-
-    @Override
-    public void updateTags(@Nonnull String vmId, @Nonnull Tag... tags) throws CloudException, InternalException {
-        // NO-OP
-    }
-
-    @Override
-    public void updateTags(@Nonnull String[] vmIds, @Nonnull Tag... tags) throws CloudException, InternalException {
-        // NO-OP
-    }
-
-    @Override
-    public void removeTags(@Nonnull String vmId, @Nonnull Tag... tags) throws CloudException, InternalException {
-        // NO-OP
-    }
-
-    @Override
-    public void removeTags(@Nonnull String[] vmIds, @Nonnull Tag... tags) throws CloudException, InternalException {
-        // NO-OP
     }
 
     @Override

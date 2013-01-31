@@ -36,6 +36,7 @@ import org.dasein.cloud.compute.ComputeServices;
 import org.dasein.cloud.compute.VirtualMachine;
 import org.dasein.cloud.compute.VirtualMachineSupport;
 import org.dasein.cloud.identity.ServiceAction;
+import org.dasein.cloud.network.AbstractVLANSupport;
 import org.dasein.cloud.network.Firewall;
 import org.dasein.cloud.network.FirewallSupport;
 import org.dasein.cloud.network.IPVersion;
@@ -47,6 +48,7 @@ import org.dasein.cloud.network.NetworkServices;
 import org.dasein.cloud.network.Networkable;
 import org.dasein.cloud.network.RoutingTable;
 import org.dasein.cloud.network.Subnet;
+import org.dasein.cloud.network.SubnetCreateOptions;
 import org.dasein.cloud.network.VLANState;
 import org.dasein.cloud.network.VLANSupport;
 import org.dasein.cloud.network.VLAN;
@@ -65,7 +67,7 @@ import javax.annotation.Nullable;
  * @version 2012.09 modified for the 2012.09 API changes
  * @since unknown
  */
-public class Vethernet implements VLANSupport {
+public class Vethernet extends AbstractVLANSupport {
     static private final Logger logger = NimbulaDirector.getLogger(VLANSupport.class);
     
     static public final String VDHCPD = "vdhcpd";
@@ -323,7 +325,7 @@ public class Vethernet implements VLANSupport {
     }
 
     @Override
-    public @Nonnull Subnet createSubnet(@Nonnull String cidr, @Nonnull String inProviderVlanId, @Nonnull String name, @Nonnull String description) throws CloudException, InternalException {
+    public @Nonnull Subnet createSubnet(@Nonnull SubnetCreateOptions options) throws CloudException, InternalException {
         throw new OperationNotSupportedException("Subnets are not supported");
     }
     
