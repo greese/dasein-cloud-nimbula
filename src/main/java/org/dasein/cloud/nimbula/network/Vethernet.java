@@ -75,6 +75,7 @@ public class Vethernet extends AbstractVLANSupport {
     private NimbulaDirector cloud;
     
     Vethernet(@Nonnull NimbulaDirector cloud) {
+        super(cloud);
         this.cloud = cloud;
     }
 

@@ -24,6 +24,7 @@ import org.dasein.cloud.InternalException;
 import org.dasein.cloud.ProviderContext;
 import org.dasein.cloud.Requirement;
 import org.dasein.cloud.ResourceStatus;
+import org.dasein.cloud.compute.AbstractVolumeSupport;
 import org.dasein.cloud.compute.Platform;
 import org.dasein.cloud.compute.VirtualMachine;
 import org.dasein.cloud.compute.Volume;
@@ -31,7 +32,6 @@ import org.dasein.cloud.compute.VolumeCreateOptions;
 import org.dasein.cloud.compute.VolumeFormat;
 import org.dasein.cloud.compute.VolumeProduct;
 import org.dasein.cloud.compute.VolumeState;
-import org.dasein.cloud.compute.VolumeSupport;
 import org.dasein.cloud.compute.VolumeType;
 import org.dasein.cloud.identity.ServiceAction;
 import org.dasein.cloud.nimbula.NimbulaDirector;
@@ -42,7 +42,6 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import javax.annotation.Nonnegative;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.util.ArrayList;
@@ -58,7 +57,7 @@ import java.util.UUID;
  * @version 2012.09.1 initial version
  * @since 2012.09.1
  */
-public class Storage implements VolumeSupport {
+public class Storage extends AbstractVolumeSupport {
     static private final Logger logger = NimbulaDirector.getLogger(Storage.class);
 
     static public final String STORAGE_ATTACHMENT  = "storageattachment";
@@ -73,7 +72,10 @@ public class Storage implements VolumeSupport {
 
     private NimbulaDirector provider;
 
-    public Storage(@Nonnull NimbulaDirector provider) { this.provider = provider; }
+    public Storage(@Nonnull NimbulaDirector provider) {
+        super(provider);
+        this.provider = provider;
+    }
 
     @Override
     public void attach(@Nonnull String volumeId, @Nonnull String toServer, @Nonnull String deviceId) throws InternalException, CloudException {
@@ -107,18 +109,6 @@ public class Storage implements VolumeSupport {
             if( logger.isTraceEnabled() ) {
                 logger.trace("EXIT - " + Storage.class.getName() + ".attach()");
             }
-        }
-    }
-
-    @Override
-    public @Nonnull String create(@Nullable String fromSnapshot, @Nonnegative int sizeInGb, @Nonnull String inZone) throws InternalException, CloudException {
-        String name = "Volume" + System.currentTimeMillis();
-
-        if( fromSnapshot != null ) {
-            return createVolume(VolumeCreateOptions.getInstanceForSnapshot(fromSnapshot, new org.dasein.util.uom.storage.Storage<Gigabyte>(sizeInGb, org.dasein.util.uom.storage.Storage.GIGABYTE), name, name));
-        }
-        else {
-            return createVolume(VolumeCreateOptions.getInstance(new org.dasein.util.uom.storage.Storage<Gigabyte>(sizeInGb, org.dasein.util.uom.storage.Storage.GIGABYTE), name, name));
         }
     }
 
@@ -158,11 +148,6 @@ public class Storage implements VolumeSupport {
         catch( JSONException e ) {
             throw new CloudException(e);
         }
-    }
-
-    @Override
-    public void detach(@Nonnull String volumeId) throws InternalException, CloudException {
-        detach(volumeId, false);
     }
 
     @Override
