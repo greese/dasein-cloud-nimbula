@@ -33,10 +33,10 @@ import org.dasein.cloud.ProviderContext;
 import org.dasein.cloud.Requirement;
 import org.dasein.cloud.ResourceStatus;
 import org.dasein.cloud.identity.ServiceAction;
+import org.dasein.cloud.network.AbstractFirewallSupport;
 import org.dasein.cloud.network.Direction;
 import org.dasein.cloud.network.Firewall;
 import org.dasein.cloud.network.FirewallRule;
-import org.dasein.cloud.network.FirewallSupport;
 import org.dasein.cloud.network.Permission;
 import org.dasein.cloud.network.Protocol;
 import org.dasein.cloud.network.RuleTarget;
@@ -51,7 +51,7 @@ import javax.annotation.Nonnegative;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
-public class SecurityList implements FirewallSupport {
+public class SecurityList extends AbstractFirewallSupport {
     static private final Logger logger = NimbulaDirector.getLogger(SecurityList.class);
     
     static public final String SECURITY_APPLICATION = "secapplication";
@@ -61,7 +61,10 @@ public class SecurityList implements FirewallSupport {
     
     private NimbulaDirector provider;
     
-    SecurityList(@Nonnull NimbulaDirector provider) { this.provider = provider; }
+    SecurityList(@Nonnull NimbulaDirector provider) {
+        super(provider);
+        this.provider = provider;
+    }
 
     private String createApplication(Protocol protocol, String dport) throws CloudException, InternalException {
         NimbulaMethod method = new NimbulaMethod(provider, SECURITY_APPLICATION);
@@ -184,31 +187,6 @@ public class SecurityList implements FirewallSupport {
             throw new InternalException(e);
         }
     }
-    
-    @Override
-    public @Nonnull String authorize(@Nonnull String firewallId, @Nonnull String cidr, @Nonnull Protocol protocol, int beginPort, int endPort) throws CloudException, InternalException {
-        return authorize(firewallId, Direction.INGRESS, cidr, protocol, beginPort, endPort);
-    }
-
-    @Override
-    public @Nonnull String authorize(@Nonnull String firewallId, @Nonnull Direction direction, @Nonnull String cidr, @Nonnull Protocol protocol, int beginPort, int endPort) throws CloudException, InternalException {
-        return authorize(firewallId, direction, Permission.ALLOW, cidr, protocol, RuleTarget.getGlobal(firewallId), beginPort, endPort);
-    }
-
-    @Override
-    public @Nonnull String authorize(@Nonnull String firewallId, @Nonnull Direction direction, @Nonnull Permission permission, @Nonnull String source, @Nonnull Protocol protocol, int beginPort, int endPort) throws CloudException, InternalException {
-        return authorize(firewallId, direction, permission, source, protocol, RuleTarget.getGlobal(firewallId), beginPort, endPort);
-    }
-
-    @Override
-    public @Nonnull String authorize(@Nonnull String firewallId, @Nonnull Direction direction, @Nonnull Permission permission, @Nonnull String source, @Nonnull Protocol protocol, @Nonnull RuleTarget target, int beginPort, int endPort) throws CloudException, InternalException {
-        if( direction.equals(Direction.INGRESS) ) {
-            return authorize(firewallId, direction, permission, RuleTarget.getCIDR(source), protocol, target, beginPort, endPort, 0);
-        }
-        else {
-            return authorize(firewallId, direction, permission, target, protocol, RuleTarget.getCIDR(source), beginPort, endPort, 0);
-        }
-    }
 
     @Override
     public @Nonnull String authorize(@Nonnull String firewallId, @Nonnull Direction direction, @Nonnull Permission permission, @Nonnull RuleTarget sourceEndpoint, @Nonnull Protocol protocol, @Nonnull RuleTarget destinationEndpoint, int beginPort, int endPort, @Nonnegative int precedence) throws CloudException, InternalException {
@@ -308,7 +286,7 @@ public class SecurityList implements FirewallSupport {
 
     @Override
     public @Nonnull String createInVLAN(@Nonnull String name, @Nonnull String description, @Nonnull String providerVlanId) throws InternalException, CloudException {
-        throw new UnsupportedOperationException("VLAN security list creation is not supported");
+        throw new OperationNotSupportedException("VLAN security list creation is not supported");
     }
     
     @Override
