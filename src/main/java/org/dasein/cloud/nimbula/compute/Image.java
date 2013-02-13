@@ -23,23 +23,18 @@ import java.util.Collections;
 import java.util.Locale;
 
 import org.apache.log4j.Logger;
-import org.dasein.cloud.AsynchronousTask;
 import org.dasein.cloud.CloudException;
 import org.dasein.cloud.InternalException;
 import org.dasein.cloud.OperationNotSupportedException;
 import org.dasein.cloud.ProviderContext;
 import org.dasein.cloud.Requirement;
-import org.dasein.cloud.ResourceStatus;
-import org.dasein.cloud.Tag;
 import org.dasein.cloud.compute.AbstractImageSupport;
 import org.dasein.cloud.compute.Architecture;
 import org.dasein.cloud.compute.ImageClass;
-import org.dasein.cloud.compute.ImageCreateOptions;
 import org.dasein.cloud.compute.ImageFilterOptions;
 import org.dasein.cloud.compute.MachineImage;
 import org.dasein.cloud.compute.MachineImageFormat;
 import org.dasein.cloud.compute.MachineImageState;
-import org.dasein.cloud.compute.MachineImageSupport;
 import org.dasein.cloud.compute.MachineImageType;
 import org.dasein.cloud.compute.Platform;
 import org.dasein.cloud.identity.ServiceAction;
@@ -143,19 +138,14 @@ public class Image extends AbstractImageSupport {
 
     @Override
     public @Nonnull Iterable<MachineImage> listImages(@Nullable ImageFilterOptions options) throws CloudException, InternalException {
-        ImageClass cls = (options == null ? null : options.getImageClass());
-
-        if( cls != null && !cls.equals(ImageClass.MACHINE) ) {
-            return Collections.emptyList();
-        }
         ProviderContext ctx = getProvider().getContext();
 
         if( ctx == null ) {
             throw new CloudException("No context was set for this request");
         }
-        String ownedBy = (options == null ? null : options.getAccountNumber());
+        String acct = (options == null ? null : options.getAccountNumber());
 
-        if( ownedBy == null || ownedBy.equals(ctx.getAccountNumber()) ) {
+        if( acct == null || acct.equals(ctx.getAccountNumber()) ) {
             NimbulaMethod method = new NimbulaMethod(cloud, MACHINEIMAGE);
 
             method.list();
@@ -166,7 +156,7 @@ public class Image extends AbstractImageSupport {
                 for( int i=0; i<array.length(); i++ ) {
                     MachineImage image = toMachineImage(array.getJSONObject(i));
 
-                    if( image != null ) {
+                    if( image != null && (options == null || options.matches(image)) ) {
                         images.add(image);
                     }
                 }
@@ -181,11 +171,11 @@ public class Image extends AbstractImageSupport {
             }
         }
         else {
-            if( !ownedBy.endsWith("/") ){
-                ownedBy = ownedBy + "/";
+            if( !acct.endsWith("/") ){
+                acct = acct + "/";
             }
             NimbulaMethod method = new NimbulaMethod(cloud, MACHINEIMAGE);
-            int code = method.get(ownedBy);
+            int code = method.get(acct);
 
             if( code == 401 ) {
                 return Collections.emptyList();
@@ -197,7 +187,7 @@ public class Image extends AbstractImageSupport {
                 for( int i=0; i<array.length(); i++ ) {
                     MachineImage image = toMachineImage(array.getJSONObject(i));
 
-                    if( image != null ) {
+                    if( image != null && options.matches(image) ) {
                         images.add(image);
                     }
                 }
@@ -280,7 +270,7 @@ public class Image extends AbstractImageSupport {
     }
 
     @Override
-    public @Nonnull Iterable<MachineImage> searchPublicImages(final @Nullable String keyword, final @Nullable Platform platform, final @Nullable Architecture architecture, final @Nullable ImageClass... imageClasses) throws CloudException, InternalException {
+    public @Nonnull Iterable<MachineImage> searchPublicImages(final @Nonnull ImageFilterOptions options) throws CloudException, InternalException {
         PopulatorThread<MachineImage> populator;
 
         cloud.hold();
@@ -289,7 +279,7 @@ public class Image extends AbstractImageSupport {
             public void populate(@Nonnull Jiterator<MachineImage> iterator) throws Exception {
                 try {
                     for( MachineImage image : listImages(ImageFilterOptions.getInstance().withAccountNumber("/nimbula/public/")) ) {
-                        if( matches(image, keyword, platform, architecture, imageClasses) ) {
+                        if( options.matches(image) ) {
                             iterator.push(image);
                         }
                     }
