@@ -70,7 +70,7 @@
     <dependency>
         <groupId>org.dasein</groupId>
         <artifactId>dasein-util</artifactId>
-        <version>2012.08</version>
+        <version>2013.02</version>
         <scope>compile</scope>
         <optional>false</optional>
     </dependency>
@@ -93,6 +93,14 @@
       <scope>compile</scope>
     </dependency>
 
+      <!-- Provided -->
+      <dependency>
+          <groupId>javax.servlet</groupId>
+          <artifactId>servlet-api</artifactId>
+          <version>2.5</version>
+          <scope>provided</scope>
+      </dependency>
+
       <!-- Test -->
       <dependency>
           <groupId>org.dasein</groupId>
@@ -104,7 +112,7 @@
       <dependency>
           <groupId>junit</groupId>
           <artifactId>junit</artifactId>
-          <version>4.8.2</version>
+          <version>4.9</version>
           <scope>test</scope>
       </dependency>
   </dependencies>
