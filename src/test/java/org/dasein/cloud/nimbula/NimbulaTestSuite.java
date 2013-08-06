@@ -18,13 +18,7 @@
 
 package org.dasein.cloud.nimbula;
 
-import junit.framework.Test;
+import org.dasein.cloud.test.GlobalTestSuite;
 
-import org.dasein.cloud.test.ComprehensiveTestSuite;
-import org.dasein.cloud.test.TestConfigurationException;
-
-public class NimbulaTestSuite  {
-    static public Test suite() throws TestConfigurationException {
-        return new ComprehensiveTestSuite(NimbulaDirector.class);
-    }
+public class NimbulaTestSuite extends GlobalTestSuite {
 }
