@@ -445,6 +445,11 @@ public class Instance extends AbstractVMSupport {
         throw new CloudException("The system timed out waiting for the virtual machine to terminate");
     }
 
+    @Override
+    public void terminate(String vmId, String explanation)throws CloudException, InternalException{
+        terminate(vmId);
+    }
+
     private @Nonnull VirtualMachineProduct toProduct(@Nonnull JSONObject ob) throws JSONException {
         VirtualMachineProduct product = new VirtualMachineProduct();
         
